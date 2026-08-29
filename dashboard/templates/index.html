@@ -1,0 +1,1536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wednesday — AI Voice & Memory Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-gradient: radial-gradient(circle at 50% 0%, #1a102f 0%, #0c0d14 60%, #07080b 100%);
+      --surface: #12141e;
+      --surface-border: rgba(168, 85, 247, 0.2);
+      --surface-hover: #1c1f2e;
+      --accent: #9333ea;
+      --accent-light: #c084fc;
+      --accent-glow: rgba(147, 51, 234, 0.4);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --user-bg: linear-gradient(135deg, #4c1d95 0%, #3b0764 100%);
+      --ai-bg: rgba(22, 25, 38, 0.95);
+      --status-ready: #10b981;
+      --status-listening: #a855f7;
+      --status-thinking: #f59e0b;
+      --status-speaking: #3b82f6;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      width: 100%;
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      display: flex;
+      flex-direction: row;
+      overflow: hidden;
+    }
+
+    /* ==========================================
+       SIDEBAR / SESSIONS DRAWER
+       ========================================== */
+    .sidebar {
+      width: 280px;
+      height: 100%;
+      background: rgba(10, 11, 18, 0.95);
+      backdrop-filter: blur(20px);
+      border-right: 1px solid var(--surface-border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      transition: all 0.3s ease;
+      z-index: 60;
+    }
+
+    .sidebar.collapsed {
+      margin-left: -280px;
+    }
+
+    .sidebar-header {
+      padding: 1.25rem;
+      border-bottom: 1px solid var(--surface-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+
+    .btn-new-chat {
+      margin: 1rem 1.25rem 0.5rem 1.25rem;
+      padding: 10px 14px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--accent) 0%, #6b21a8 100%);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 4px 14px var(--accent-glow);
+      transition: all 0.2s ease;
+    }
+
+    .btn-new-chat:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px var(--accent-glow);
+    }
+
+    .sessions-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.5rem 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .sessions-list::-webkit-scrollbar {
+      width: 5px;
+    }
+    .sessions-list::-webkit-scrollbar-thumb {
+      background: rgba(168, 85, 247, 0.2);
+      border-radius: 4px;
+    }
+
+    .session-item {
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.86rem;
+      transition: all 0.2s ease;
+    }
+
+    .session-item:hover {
+      background: var(--surface);
+      color: var(--text-main);
+      border-color: rgba(255, 255, 255, 0.05);
+    }
+
+    .session-item.active {
+      background: rgba(147, 51, 234, 0.18);
+      color: #f3e8ff;
+      border-color: rgba(168, 85, 247, 0.4);
+      font-weight: 600;
+    }
+
+    .session-title {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .session-actions {
+      display: none;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .session-item:hover .session-actions,
+    .session-item.active .session-actions {
+      display: flex;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.8rem;
+      padding: 4px;
+      border-radius: 4px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-icon:hover {
+      color: #f87171;
+      background: rgba(239, 68, 68, 0.15);
+    }
+
+    .sidebar-footer {
+      padding: 0.75rem 1rem;
+      border-top: 1px solid var(--surface-border);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .btn-sidebar-opt {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-sidebar-opt:hover {
+      background: var(--surface);
+      color: var(--text-main);
+    }
+
+    /* ==========================================
+       MAIN APP SHELL
+       ========================================== */
+    .app-shell {
+      flex: 1;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    /* Header */
+    header {
+      flex-shrink: 0;
+      height: 70px;
+      padding: 0 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(12, 13, 20, 0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--surface-border);
+      z-index: 50;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn-toggle-sidebar {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-main);
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      transition: all 0.2s ease;
+    }
+
+    .btn-toggle-sidebar:hover {
+      border-color: var(--accent);
+      background: var(--surface-hover);
+    }
+
+    .current-chat-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Status Pill */
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 24px;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      font-size: 0.8rem;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      transition: all 0.3s ease;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--status-ready);
+      box-shadow: 0 0 10px var(--status-ready);
+      transition: all 0.3s ease;
+    }
+
+    .status-pill.listening .status-dot {
+      background: var(--status-listening);
+      box-shadow: 0 0 14px var(--status-listening);
+      animation: pulse 0.8s infinite alternate;
+    }
+    .status-pill.listening {
+      border-color: var(--status-listening);
+      color: #e9d5ff;
+    }
+
+    .status-pill.thinking .status-dot {
+      background: var(--status-thinking);
+      box-shadow: 0 0 14px var(--status-thinking);
+      animation: pulse 0.6s infinite alternate;
+    }
+    .status-pill.thinking {
+      border-color: var(--status-thinking);
+      color: #fef08a;
+    }
+
+    .status-pill.speaking .status-dot {
+      background: var(--status-speaking);
+      box-shadow: 0 0 14px var(--status-speaking);
+      animation: pulse 0.7s infinite alternate;
+    }
+    .status-pill.speaking {
+      border-color: var(--status-speaking);
+      color: #bfdbfe;
+    }
+
+    @keyframes pulse {
+      from { transform: scale(0.8); opacity: 0.6; }
+      to { transform: scale(1.3); opacity: 1; }
+    }
+
+    .btn-header {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-main);
+      padding: 7px 12px;
+      border-radius: 9px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-header:hover {
+      background: var(--surface-hover);
+      border-color: var(--accent);
+    }
+
+    .btn-header.muted {
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.4);
+      background: rgba(239, 68, 68, 0.12);
+    }
+
+    /* Main Chat Container */
+    main {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      max-width: 900px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1rem 1.5rem 0 1.5rem;
+      position: relative;
+    }
+
+    /* Scrollable Area */
+    .chat-scroll-area {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      padding-right: 0.5rem;
+      scroll-behavior: smooth;
+    }
+
+    .chat-scroll-area::-webkit-scrollbar {
+      width: 7px;
+    }
+    .chat-scroll-area::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 8px;
+    }
+    .chat-scroll-area::-webkit-scrollbar-thumb {
+      background: rgba(168, 85, 247, 0.25);
+      border-radius: 8px;
+    }
+
+    /* Empty State */
+    .empty-state {
+      margin: auto;
+      text-align: center;
+      max-width: 520px;
+      padding: 2.5rem 1.5rem;
+      animation: fadeIn 0.4s ease;
+    }
+
+    .empty-icon {
+      font-size: 3.2rem;
+      margin-bottom: 0.8rem;
+      filter: drop-shadow(0 0 24px var(--accent-glow));
+    }
+
+    .empty-state h2 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .empty-state p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 1.75rem;
+    }
+
+    .suggestion-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .suggestion-card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--text-main);
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .suggestion-card:hover {
+      background: var(--surface-hover);
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(147, 51, 234, 0.2);
+    }
+
+    /* Message Rows */
+    .message-row {
+      display: flex;
+      gap: 12px;
+      width: 100%;
+      animation: messageSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes messageSlideIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .message-row.user {
+      flex-direction: row-reverse;
+    }
+
+    .msg-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .message-row.user .msg-avatar {
+      background: linear-gradient(135deg, #7c3aed 0%, #4c1d95 100%);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .message-row.assistant .msg-avatar {
+      background: linear-gradient(135deg, #2e1065 0%, #1e1b4b 100%);
+      border: 1px solid var(--surface-border);
+    }
+
+    .msg-content-wrapper {
+      max-width: 75%;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .message-row.user .msg-content-wrapper {
+      align-items: flex-end;
+    }
+
+    .msg-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      padding: 0 4px;
+    }
+
+    .tag-source {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 5px;
+      font-size: 0.65rem;
+    }
+
+    .tag-speaker {
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      background: rgba(168, 85, 247, 0.2);
+      color: var(--accent-light);
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .tag-speaker.owner {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+    .tag-speaker.guest {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+
+    .tag-latency {
+      background: rgba(168, 85, 247, 0.15);
+      color: var(--accent-light);
+      padding: 2px 6px;
+      border-radius: 5px;
+      font-size: 0.65rem;
+    }
+
+    .msg-bubble {
+      padding: 12px 16px;
+      border-radius: 14px;
+      font-size: 0.92rem;
+      line-height: 1.6;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+    }
+
+    .message-row.user .msg-bubble {
+      background: var(--user-bg);
+      border: 1px solid rgba(168, 85, 247, 0.4);
+      color: #fdf4ff;
+      border-top-right-radius: 4px;
+    }
+
+    .message-row.assistant .msg-bubble {
+      background: var(--ai-bg);
+      border: 1px solid var(--surface-border);
+      color: #f1f5f9;
+      border-top-left-radius: 4px;
+    }
+
+    .btn-direct-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      padding: 7px 12px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent) 0%, #7e22ce 100%);
+      color: white !important;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.82rem;
+      box-shadow: 0 4px 12px var(--accent-glow);
+    }
+
+    /* Scroll to bottom button */
+    .btn-scroll-bottom {
+      position: absolute;
+      bottom: 80px;
+      right: 30px;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      color: var(--text-main);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 4px 14px var(--accent-glow);
+      z-index: 40;
+    }
+
+    /* Input Section */
+    .input-section {
+      flex-shrink: 0;
+      padding: 0.85rem 0 1.1rem 0;
+    }
+
+    .input-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(18, 20, 30, 0.95);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--surface-border);
+      border-radius: 14px;
+      padding: 6px 10px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .input-bar:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    .text-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-main);
+      font-size: 0.92rem;
+      font-family: inherit;
+      padding: 8px 8px;
+    }
+
+    .text-input::placeholder {
+      color: rgba(148, 163, 184, 0.6);
+    }
+
+    .btn-action {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 1rem;
+    }
+
+    .btn-mic {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+    }
+    .btn-mic:hover {
+      background: var(--accent);
+    }
+
+    .btn-send {
+      background: linear-gradient(135deg, var(--accent) 0%, #7e22ce 100%);
+      color: white;
+    }
+    .btn-send:hover {
+      transform: scale(1.05);
+    }
+
+    /* Footer */
+    footer {
+      flex-shrink: 0;
+      height: 38px;
+      padding: 0 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(10, 11, 16, 0.95);
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ==========================================
+       MODAL / MEMORY VAULT OVERLAY
+       ========================================== */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 1rem;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-card {
+      width: 100%;
+      max-width: 520px;
+      background: #141724;
+      border: 1px solid var(--surface-border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      max-height: 85vh;
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--surface-border);
+      padding-bottom: 0.75rem;
+    }
+
+    .modal-header h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .memory-list {
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 320px;
+      padding-right: 4px;
+    }
+
+    .memory-item {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      padding: 10px 12px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .memory-tag {
+      font-size: 0.7rem;
+      font-family: 'JetBrains Mono', monospace;
+      background: rgba(168, 85, 247, 0.2);
+      color: var(--accent-light);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .memory-text {
+      flex: 1;
+      font-size: 0.85rem;
+      color: #f1f5f9;
+    }
+
+    .add-memory-bar {
+      display: flex;
+      gap: 8px;
+      border-top: 1px solid var(--surface-border);
+      padding-top: 0.75rem;
+    }
+
+    .add-memory-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+
+    .btn-add-mem {
+      background: var(--accent);
+      border: none;
+      color: white;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    @media (max-width: 768px) {
+      .sidebar { position: absolute; }
+      .sidebar.collapsed { margin-left: -280px; }
+      main { padding: 0.75rem 1rem 0 1rem; }
+      .suggestion-grid { grid-template-columns: 1fr; }
+      .msg-content-wrapper { max-width: 88%; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Collapsible Left Sidebar for Conversations & Memory -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-brand">
+        <span>🖤</span> Wednesday AI
+      </div>
+      <button class="btn-icon" onclick="toggleSidebar()" title="Close sidebar">✕</button>
+    </div>
+
+    <button class="btn-new-chat" onclick="createNewSession()">
+      <span>+</span> New Conversation
+    </button>
+
+    <div class="sessions-list" id="sessionsList">
+      <!-- Session items populated dynamically -->
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="btn-sidebar-opt" onclick="openVoiceProfilesModal()">
+        <span>🎙️</span> Voice Biometrics
+      </button>
+      <button class="btn-sidebar-opt" onclick="openMemoryVault()">
+        <span>🧠</span> Memory Vault
+      </button>
+      <button class="btn-sidebar-opt" onclick="exportChatMarkdown()">
+        <span>📥</span> Export Chat (.md)
+      </button>
+      <button class="btn-sidebar-opt" onclick="clearCurrentSession()" style="color:#f87171;">
+        <span>🗑️</span> Clear Current Chat
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main Application Shell -->
+  <div class="app-shell">
+    
+    <!-- Top Header -->
+    <header>
+      <div class="header-left">
+        <button class="btn-toggle-sidebar" onclick="toggleSidebar()" title="Toggle conversations menu">☰</button>
+        <div class="current-chat-title" id="chatTitle">Main Conversation</div>
+      </div>
+
+      <div class="header-controls">
+        <div class="status-pill" id="statusPill">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">Ready</span>
+        </div>
+
+        <button class="btn-header" id="muteBtn" onclick="toggleMute()" title="Toggle voice audio output">
+          <span id="muteIcon">🔊</span>
+          <span id="muteText">Voice On</span>
+        </button>
+
+        <select class="select-model" id="modelSelect" onchange="changeBrainModel(this.value)" title="Switch active AI brain model">
+          <option value="gemini-3.6-flash">✨ Gemini 3.6 Flash (Fast & Smart)</option>
+          <option value="gemini-2.5-flash">⚡ Gemini 2.5 Flash</option>
+          <option value="gemini-2.5-pro">🧠 Gemini 2.5 Pro (Deep Reasoning)</option>
+          <option value="openai/gpt-oss-120b">🚀 Groq GPT-OSS 120B</option>
+          <option value="meta-llama/llama-3.3-70b-versatile">🦙 Groq Llama 3.3 70B</option>
+          <option value="qwen/qwen-2.5-32b">🔮 Groq Qwen 2.5 32B</option>
+        </select>
+
+        <button class="btn-header" onclick="createNewSession()" title="Start fresh conversation">
+          <span>+</span> New
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Chat Workspace -->
+    <main>
+      <div class="chat-scroll-area" id="chatScrollArea">
+        <!-- Empty / Welcome State -->
+        <div class="empty-state" id="emptyState">
+          <div class="empty-avatar">🖤</div>
+          <h2>Wednesday Voice & Memory Agent</h2>
+          <p>
+            Say <strong>"Wednesday"</strong> into your microphone or type your message below. 
+            All conversation context, voice profiles, and facts persist automatically across sessions.
+          </p>
+
+          <div class="suggestion-grid">
+            <div class="suggestion-card" onclick="sendSuggestion('Remember that my favorite superhero is Batman')">
+              <span>🧠</span> Remember my favorite superhero
+            </div>
+            <div class="suggestion-card" onclick="sendSuggestion('Who am I and what do you remember about me?')">
+              <span>👤</span> Who am I?
+            </div>
+            <div class="suggestion-card" onclick="sendSuggestion('What are the latest NetworkChuck videos in YouTube?')">
+              <span>📺</span> Search NetworkChuck videos
+            </div>
+            <div class="suggestion-card" onclick="sendSuggestion('What is the weather in Tokyo right now?')">
+              <span>⛅</span> Weather in Tokyo
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Floating Scroll-to-Bottom Button -->
+      <button class="btn-scroll-bottom" id="scrollBottomBtn" onclick="scrollToBottom(true)" title="Scroll to bottom">
+        ↓
+      </button>
+
+      <!-- Bottom Input Area -->
+      <div class="input-section">
+        <div class="input-bar">
+          <button class="btn-action btn-mic" title="Speak to Wednesday (Push to talk)" onclick="triggerMic()">🎤</button>
+          <input 
+            type="text" 
+            id="textInput" 
+            class="text-input" 
+            placeholder="Ask Wednesday anything or say 'Wednesday'..." 
+            autocomplete="off"
+            onkeydown="handleKeyDown(event)"
+          />
+          <button class="btn-action btn-send" title="Send message (Enter)" onclick="sendTextMessage()">➤</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+      <div>
+        <span>⚡ Brain:</span> <strong style="color:var(--accent-light);" id="modelBadge">gpt-oss-120b</strong>
+      </div>
+      <div>
+        <span>🎙️ Voice:</span> <span style="color:#10b981;" id="voiceProfileBadge">Voice Biometrics Active</span>
+      </div>
+      <div>
+        <span>🟢 Connection:</span> <span id="wsStatus">Connecting...</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Memory Vault Modal -->
+  <div class="modal-overlay" id="memoryModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><span>🧠</span> Long-Term Memory Vault</h3>
+        <button class="btn-icon" onclick="closeMemoryVault()">✕</button>
+      </div>
+      <p style="font-size:0.84rem; color:var(--text-muted);">
+        Facts and preferences saved here are permanently injected into Wednesday's brain across all sessions.
+      </p>
+
+      <div class="memory-list" id="memoryList">
+        <!-- Memory items loaded here -->
+      </div>
+
+      <div class="add-memory-bar">
+        <input type="text" id="newMemTopic" placeholder="Topic (e.g. name)" style="width:90px;" class="add-memory-input">
+        <input type="text" id="newMemFact" placeholder="Fact (e.g. Tanush studies cybersecurity)" class="add-memory-input">
+        <button class="btn-add-mem" onclick="addManualMemory()">+ Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Voice Biometrics Modal -->
+  <div class="modal-overlay" id="voiceModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><span>🎙️</span> Voice Biometrics & Enrolled Profiles</h3>
+        <button class="btn-icon" onclick="closeVoiceProfilesModal()">✕</button>
+      </div>
+      <p style="font-size:0.84rem; color:var(--text-muted);">
+        Acoustic voiceprints registered below allow Wednesday to identify who is speaking, address you by name, and authenticate voice commands.
+      </p>
+
+      <div class="memory-list" id="voiceProfilesList">
+        <!-- Voice profile items loaded here -->
+      </div>
+
+      <div style="background:rgba(255,255,255,0.03); border:1px solid var(--surface-border); border-radius:10px; padding:12px; font-size:0.82rem; color:var(--text-muted); line-height:1.5;">
+        <strong style="color:var(--text-main);">To Enroll or Calibrate Your Voice Profile:</strong><br>
+        Open a terminal and run <code style="color:var(--accent-light); font-family:'JetBrains Mono',monospace; background:rgba(0,0,0,0.3); padding:2px 5px; border-radius:4px;">python enroll_voice.py</code> to record your voice calibration samples.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let ws;
+    let isVoiceMuted = false;
+    let currentSessionId = "default";
+    let sessionsData = [];
+    let memoriesData = [];
+    let voiceProfilesData = [];
+
+    const sidebar = document.getElementById('sidebar');
+    const sessionsList = document.getElementById('sessionsList');
+    const chatScrollArea = document.getElementById('chatScrollArea');
+    const emptyState = document.getElementById('emptyState');
+    const chatTitle = document.getElementById('chatTitle');
+    const statusPill = document.getElementById('statusPill');
+    const statusText = document.getElementById('statusText');
+    const muteBtn = document.getElementById('muteBtn');
+    const muteIcon = document.getElementById('muteIcon');
+    const muteText = document.getElementById('muteText');
+    const textInput = document.getElementById('textInput');
+    const wsStatus = document.getElementById('wsStatus');
+    const modelBadge = document.getElementById('modelBadge');
+    const voiceProfileBadge = document.getElementById('voiceProfileBadge');
+    const scrollBottomBtn = document.getElementById('scrollBottomBtn');
+    const memoryModal = document.getElementById('memoryModal');
+    const memoryList = document.getElementById('memoryList');
+    const voiceModal = document.getElementById('voiceModal');
+    const voiceProfilesList = document.getElementById('voiceProfilesList');
+
+    chatScrollArea.addEventListener('scroll', () => {
+      const isScrolledUp = chatScrollArea.scrollHeight - chatScrollArea.scrollTop - chatScrollArea.clientHeight > 120;
+      scrollBottomBtn.style.display = isScrolledUp ? 'flex' : 'none';
+    });
+
+    function toggleSidebar() {
+      sidebar.classList.toggle('collapsed');
+    }
+
+    function scrollToBottom(force = false) {
+      chatScrollArea.scrollTo({
+        top: chatScrollArea.scrollHeight,
+        behavior: force ? 'smooth' : 'auto'
+      });
+    }
+
+    function connectWebSocket() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+      ws.onopen = () => {
+        wsStatus.textContent = 'Active (Ready)';
+        wsStatus.style.color = '#10b981';
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'init') {
+          if (data.state.model_name) {
+            modelBadge.textContent = data.state.model_name;
+            const modelSelect = document.getElementById('modelSelect');
+            if (modelSelect) modelSelect.value = data.state.model_name;
+          }
+          setMuteState(data.state.voice_muted);
+          setStatus(data.state.status);
+          currentSessionId = data.current_session_id;
+
+          renderSessionsList(data.sessions, currentSessionId);
+          memoriesData = data.memories || [];
+          voiceProfilesData = data.voice_profiles || [];
+          updateVoiceProfilesUI();
+          renderMessages(data.history);
+        }
+        else if (data.type === 'model_changed') {
+          modelBadge.textContent = data.model_name;
+          const modelSelect = document.getElementById('modelSelect');
+          if (modelSelect) modelSelect.value = data.model_name;
+        }
+        else if (data.type === 'session_switched') {
+          currentSessionId = data.session_id;
+          renderSessionsList(data.sessions, currentSessionId);
+          renderMessages(data.history);
+        }
+        else if (data.type === 'session_cleared') {
+          renderMessages([]);
+          renderSessionsList(data.sessions, currentSessionId);
+        }
+        else if (data.type === 'status_change') {
+          setStatus(data.status);
+        }
+        else if (data.type === 'new_message') {
+          if (!data.session_id || data.session_id === currentSessionId) {
+            appendMessage(data);
+          }
+          if (data.sessions) {
+            renderSessionsList(data.sessions, currentSessionId);
+          }
+        }
+        else if (data.type === 'open_url') {
+          if (data.url.startsWith('http://') || data.url.startsWith('https://')) {
+            window.open(data.url, '_blank');
+          } else {
+            // Direct native Windows application protocol (e.g. calculator:, ms-notepad:, spotify:, ms-settings:, whatsapp:)
+            const hiddenFrame = document.createElement('iframe');
+            hiddenFrame.style.display = 'none';
+            hiddenFrame.src = data.url;
+            document.body.appendChild(hiddenFrame);
+            setTimeout(() => hiddenFrame.remove(), 2500);
+          }
+        }
+        else if (data.type === 'memories_list') {
+          memoriesData = data.memories || [];
+          renderMemoryList();
+        }
+        else if (data.type === 'voice_profiles_list') {
+          voiceProfilesData = data.profiles || [];
+          renderVoiceProfilesList();
+          updateVoiceProfilesUI();
+        }
+        else if (data.type === 'mute_change') {
+          setMuteState(data.voice_muted);
+        }
+      };
+
+      ws.onclose = () => {
+        wsStatus.textContent = 'Reconnecting...';
+        wsStatus.style.color = '#ef4444';
+        setTimeout(connectWebSocket, 1500);
+      };
+    }
+
+    function renderSessionsList(sessions, activeId) {
+      sessionsData = sessions || [];
+      sessionsList.innerHTML = '';
+
+      sessionsData.forEach(s => {
+        const item = document.createElement('div');
+        item.className = `session-item ${s.id === activeId ? 'active' : ''}`;
+        
+        if (s.id === activeId) {
+          chatTitle.textContent = s.title;
+        }
+
+        item.innerHTML = `
+          <div class="session-title" onclick="switchSession('${s.id}')">
+            <span>💬</span> ${s.title}
+          </div>
+          <div class="session-actions">
+            <button class="btn-icon" onclick="deleteSession('${s.id}', event)" title="Delete session">🗑️</button>
+          </div>
+        `;
+        sessionsList.appendChild(item);
+      });
+    }
+
+    function renderMessages(history) {
+      chatScrollArea.innerHTML = '';
+      if (!history || history.length === 0) {
+        if (emptyState) {
+          chatScrollArea.appendChild(emptyState);
+          emptyState.style.display = 'block';
+        }
+        return;
+      }
+      history.forEach(msg => appendMessage(msg));
+    }
+
+    function createNewSession() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'new_session', title: 'New Conversation' }));
+      }
+    }
+
+    function switchSession(sessionId) {
+      if (sessionId === currentSessionId) return;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'switch_session', session_id: sessionId }));
+      }
+    }
+
+    function clearCurrentSession() {
+      if (confirm("Clear messages in this conversation?")) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'clear_session', session_id: currentSessionId }));
+        }
+      }
+    }
+
+    function deleteSession(sessionId, event) {
+      event.stopPropagation();
+      if (confirm("Delete this entire conversation?")) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'delete_session', session_id: sessionId }));
+        }
+      }
+    }
+
+    function exportChatMarkdown() {
+      const messages = document.querySelectorAll('.message-row');
+      if (!messages.length) {
+        alert("No messages to export.");
+        return;
+      }
+
+      let markdown = `# Wednesday AI Conversation Export\nGenerated: ${new Date().toLocaleString()}\n\n---\n\n`;
+      messages.forEach(m => {
+        const isUser = m.classList.contains('user');
+        const role = isUser ? 'User' : 'Wednesday';
+        const text = m.querySelector('.msg-bubble').innerText;
+        markdown += `### **${role}**\n${text}\n\n`;
+      });
+
+      const blob = new Blob([markdown], { type: 'text/markdown' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `wednesday-chat-${currentSessionId}.md`;
+      a.click();
+    }
+
+    /* Memory Vault Modal */
+    function openMemoryVault() {
+      memoryModal.classList.add('active');
+      renderMemoryList();
+    }
+
+    function closeMemoryVault() {
+      memoryModal.classList.remove('active');
+    }
+
+    function renderMemoryList() {
+      memoryList.innerHTML = '';
+      if (!memoriesData || memoriesData.length === 0) {
+        memoryList.innerHTML = `<div style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding:1.5rem 0;">No long-term memories stored yet.</div>`;
+        return;
+      }
+
+      memoriesData.forEach(m => {
+        const item = document.createElement('div');
+        item.className = 'memory-item';
+        item.innerHTML = `
+          <span class="memory-tag">${m.topic}</span>
+          <span class="memory-text">${m.fact}</span>
+          <button class="btn-icon" onclick="deleteMemory(${m.id})" title="Forget memory">🗑️</button>
+        `;
+        memoryList.appendChild(item);
+      });
+    }
+
+    function deleteMemory(id) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'delete_memory', memory_id: id }));
+      }
+    }
+
+    function addManualMemory() {
+      const topic = document.getElementById('newMemTopic').value.trim() || 'General';
+      const fact = document.getElementById('newMemFact').value.trim();
+      if (!fact) return;
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'add_memory', topic: topic, fact: fact }));
+        document.getElementById('newMemFact').value = '';
+      }
+    }
+
+    /* Voice Biometrics Modal */
+    function openVoiceProfilesModal() {
+      voiceModal.classList.add('active');
+      renderVoiceProfilesList();
+    }
+
+    function closeVoiceProfilesModal() {
+      voiceModal.classList.remove('active');
+    }
+
+    function updateVoiceProfilesUI() {
+      if (voiceProfileBadge) {
+        if (voiceProfilesData.length > 0) {
+          const owner = voiceProfilesData.find(p => p.is_owner);
+          voiceProfileBadge.textContent = owner ? `Voice: ${owner.name}` : `${voiceProfilesData.length} Voice Profile(s)`;
+        } else {
+          voiceProfileBadge.textContent = `Voice: Guest Mode`;
+        }
+      }
+    }
+
+    function renderVoiceProfilesList() {
+      voiceProfilesList.innerHTML = '';
+      if (!voiceProfilesData || voiceProfilesData.length === 0) {
+        voiceProfilesList.innerHTML = `<div style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding:1.5rem 0;">No voice profiles registered yet.<br>Run <strong style="color:var(--accent-light);">python enroll_voice.py</strong> to register your voice print.</div>`;
+        return;
+      }
+
+      voiceProfilesData.forEach(p => {
+        const item = document.createElement('div');
+        item.className = 'memory-item';
+        item.innerHTML = `
+          <span class="memory-tag" style="${p.is_owner ? 'background:rgba(16,185,129,0.2); color:#34d399;' : ''}">${p.is_owner ? 'Primary Owner' : 'Guest Voice'}</span>
+          <span class="memory-text"><strong>${p.name}</strong> <span style="font-size:0.75rem; color:var(--text-muted);">(${p.created_at || 'Calibrated'})</span></span>
+          <button class="btn-icon" onclick="deleteVoiceProfile('${p.name}')" title="Delete voice profile">🗑️</button>
+        `;
+        voiceProfilesList.appendChild(item);
+      });
+    }
+
+    function deleteVoiceProfile(name) {
+      if (confirm(`Delete voice profile for "${name}"?`)) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'delete_voice_profile', name: name }));
+        }
+      }
+    }
+
+    function setStatus(status) {
+      statusPill.className = 'status-pill ' + status;
+      if (status === 'idle') statusText.textContent = 'Ready';
+      else if (status === 'listening') statusText.textContent = 'Listening...';
+      else if (status === 'thinking') statusText.textContent = 'Thinking...';
+      else if (status === 'speaking') statusText.textContent = 'Speaking...';
+    }
+
+    function setMuteState(muted) {
+      isVoiceMuted = muted;
+      if (muted) {
+        muteBtn.classList.add('muted');
+        muteIcon.textContent = '🔇';
+        muteText.textContent = 'Muted';
+      } else {
+        muteBtn.classList.remove('muted');
+        muteIcon.textContent = '🔊';
+        muteText.textContent = 'Voice On';
+      }
+    }
+
+    function toggleMute() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'toggle_mute' }));
+      }
+    }
+
+    function changeBrainModel(modelName) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'change_model',
+          model_name: modelName
+        }));
+      }
+      modelBadge.textContent = modelName;
+    }
+
+    let recognition = null;
+    let isRecording = false;
+    let selectedLang = 'en-US';
+
+    function initSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = selectedLang;
+
+        recognition.onstart = () => {
+          isRecording = true;
+          setStatus('listening');
+          const micBtn = document.querySelector('.btn-mic');
+          if (micBtn) {
+            micBtn.style.background = '#ef4444';
+            micBtn.style.boxShadow = '0 0 20px rgba(239, 68, 68, 0.6)';
+          }
+          textInput.placeholder = "Listening to voice... Speak now...";
+        };
+
+        recognition.onresult = (event) => {
+          let interimText = '';
+          let finalText = '';
+
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalText += event.results[i][0].transcript;
+            } else {
+              interimText += event.results[i][0].transcript;
+            }
+          }
+
+          if (interimText) {
+            textInput.value = interimText;
+          }
+
+          if (finalText) {
+            textInput.value = finalText.trim();
+            sendTextMessage();
+          }
+        };
+
+        recognition.onerror = (event) => {
+          console.log('[SpeechRecognition Error]', event.error);
+          stopRecordingUI();
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'trigger_listen' }));
+          }
+        };
+
+        recognition.onend = () => {
+          stopRecordingUI();
+        };
+      }
+    }
+
+    function stopRecordingUI() {
+      isRecording = false;
+      const micBtn = document.querySelector('.btn-mic');
+      if (micBtn) micBtn.style.background = '';
+      textInput.placeholder = "Ask Wednesday anything or say 'Wednesday'...";
+    }
+
+    function triggerMic() {
+      if (!recognition) {
+        initSpeechRecognition();
+      }
+
+      if (recognition) {
+        try {
+          if (isRecording) {
+            recognition.stop();
+          } else {
+            recognition.start();
+          }
+          return;
+        } catch (e) {
+          console.log('[Mic Start Error]', e);
+        }
+      }
+
+      // Backend trigger fallback
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'trigger_listen' }));
+      }
+    }
+
+    function sendTextMessage() {
+      const text = textInput.value.trim();
+      if (!text) return;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'text_message',
+          session_id: currentSessionId,
+          text: text
+        }));
+        textInput.value = '';
+      }
+    }
+
+    function sendSuggestion(text) {
+      textInput.value = text;
+      sendTextMessage();
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === 'Enter') {
+        sendTextMessage();
+      }
+    }
+
+    function extractUrl(text) {
+      const match = text.match(/https?:\/\/[^\s]+/i);
+      return match ? match[0] : null;
+    }
+
+    function appendMessage(data) {
+      if (emptyState && emptyState.style.display !== 'none') {
+        emptyState.style.display = 'none';
+      }
+
+      const row = document.createElement('div');
+      row.className = `message-row ${data.role}`;
+
+      const avatar = document.createElement('div');
+      avatar.className = 'msg-avatar';
+      avatar.textContent = data.role === 'user' ? '👤' : '🖤';
+
+      const contentWrapper = document.createElement('div');
+      contentWrapper.className = 'msg-content-wrapper';
+
+      const header = document.createElement('div');
+      header.className = 'msg-header';
+
+      const msgText = data.text || data.content || '';
+      const msgSource = data.source || 'text';
+      const msgTime = data.timestamp || data.created_at || '';
+
+      if (data.role === 'user') {
+        const sourceBadge = msgSource === 'voice' ? '🎙️ Voice' : '⌨️ Text';
+        const speakerClass = data.is_owner ? 'owner' : (data.speaker ? 'guest' : '');
+        const speakerBadge = data.speaker ? `<span class="tag-speaker ${speakerClass}">👤 ${data.speaker}${data.confidence ? ' (' + data.confidence + '%)' : ''}</span>` : '';
+        header.innerHTML = `${speakerBadge} <span class="tag-source">${sourceBadge}</span> <span>${msgTime}</span>`;
+      } else {
+        const latencyText = data.latency ? `<span class="tag-latency">⚡ ${data.latency}s</span>` : '';
+        header.innerHTML = `<span>Wednesday</span> ${latencyText} <span>${msgTime}</span>`;
+      }
+
+      const bubble = document.createElement('div');
+      bubble.className = 'msg-bubble';
+      bubble.textContent = msgText;
+
+      const detectedUrl = data.url || extractUrl(msgText);
+      if (detectedUrl) {
+        const linkBtn = document.createElement('a');
+        linkBtn.href = detectedUrl;
+        if (detectedUrl.startsWith('http')) {
+          linkBtn.target = '_blank';
+        }
+        linkBtn.className = 'btn-direct-link';
+        const isProto = !detectedUrl.startsWith('http');
+        linkBtn.innerHTML = isProto ? `⚡ Launch App ↗` : `🌐 Open Site ↗`;
+        bubble.appendChild(document.createElement('br'));
+        bubble.appendChild(linkBtn);
+      }
+
+      contentWrapper.appendChild(header);
+      contentWrapper.appendChild(bubble);
+
+      row.appendChild(avatar);
+      row.appendChild(contentWrapper);
+      chatScrollArea.appendChild(row);
+
+      setTimeout(() => {
+        chatScrollArea.scrollTop = chatScrollArea.scrollHeight;
+      }, 50);
+    }
+
+    window.addEventListener('DOMContentLoaded', connectWebSocket);
+  </script>
+</body>
+</html>
