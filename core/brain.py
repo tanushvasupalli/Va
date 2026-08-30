@@ -28,6 +28,25 @@ from tools.web_tools import (
     google_search_in_browser
 )
 
+from tools.n8n_tools import trigger_n8n_workflow, call_n8n_webhook, list_n8n_workflows
+from tools.pc_bridge_tools import (
+    read_remote_pc_file,
+    list_remote_pc_directory,
+    search_remote_pc_files,
+    write_remote_pc_file,
+    control_remote_pc_power,
+    exec_remote_pc_command,
+    check_pc_status
+)
+from tools.network_tools import (
+    scan_local_network,
+    wake_pc_via_wol,
+    ping_network_device,
+    send_network_http_request
+)
+from tools.mcp_tools import list_connected_mcp_tools, execute_mcp_tool
+from core.mcp_client import mcp_client
+
 def clean_llm_response(text: str) -> str:
     """Sanitizes LLM responses, strips thinking tokens, tool tags, and ensures clean speech in any language."""
     if not text:
@@ -58,8 +77,46 @@ def execute_tool(name: str, args: dict) -> str:
     """Executes a tool by name with arguments dict."""
     try:
         clean_name = name.lower().replace("_", "")
-        # File Tools (On-Demand Only)
-        if "readlocalfile" in clean_name or "readfile" in clean_name:
+        # Remote PC Bridge Tools
+        if "readremotepc" in clean_name or "readpcfile" in clean_name:
+            return read_remote_pc_file(args.get("file_path", str(args)))
+        elif "listremotepc" in clean_name or "listpcdirectory" in clean_name:
+            return list_remote_pc_directory(args.get("folder_path", "Desktop"))
+        elif "searchremotepc" in clean_name or "searchpcfiles" in clean_name:
+            return search_remote_pc_files(args.get("query", str(args)), args.get("search_in", "Desktop"))
+        elif "writeremotepc" in clean_name or "writepcfile" in clean_name:
+            return write_remote_pc_file(args.get("file_path", "notes.txt"), args.get("content", ""))
+        elif "controlremotepc" in clean_name or "pcpower" in clean_name:
+            return control_remote_pc_power(args.get("action", "status"))
+        elif "executepccommand" in clean_name or "execpccommand" in clean_name:
+            return exec_remote_pc_command(args.get("command", str(args)))
+        elif "checkpcstatus" in clean_name:
+            return check_pc_status()
+
+        # Local Network & Device Tools
+        elif "scanlocalnetwork" in clean_name or "scannetwork" in clean_name or "wifiscan" in clean_name:
+            return scan_local_network(args.get("subnet", ""))
+        elif "wakepc" in clean_name or "wakeonlan" in clean_name or "wol" in clean_name:
+            return wake_pc_via_wol(args.get("mac_address", ""))
+        elif "pingnetwork" in clean_name or "pingdevice" in clean_name:
+            return ping_network_device(args.get("host", str(args)))
+        elif "networkhttprequest" in clean_name or "iotrequest" in clean_name:
+            return send_network_http_request(args.get("url", ""), args.get("method", "GET"), args.get("json_data", None))
+
+        # n8n Automation Tools
+        elif "triggern8n" in clean_name or "n8nworkflow" in clean_name:
+            return trigger_n8n_workflow(args.get("workflow_id_or_name", str(args)), args.get("payload_data", None))
+        elif "calln8nwebhook" in clean_name or "n8nwebhook" in clean_name:
+            return call_n8n_webhook(args.get("path_or_url", ""), args.get("payload", None))
+        elif "listn8n" in clean_name:
+            return list_n8n_workflows()
+
+        # Model Context Protocol (MCP) Tools
+        elif clean_name.startswith("mcp") or name.startswith("mcp_"):
+            return execute_mcp_tool(name, args)
+
+        # File Tools (Local)
+        elif "readlocalfile" in clean_name or "readfile" in clean_name:
             return read_local_file(args.get("file_path", str(args)))
         elif "listlocaldirectory" in clean_name or "listdirectory" in clean_name or "listfiles" in clean_name:
             return list_local_directory(args.get("folder_name_or_path", "documents"))
@@ -110,6 +167,7 @@ def execute_tool(name: str, args: dict) -> str:
         return f"Completed {name}."
     except Exception as e:
         return f"Tool execution error: {e}"
+
 
 # Tool schema definitions for Groq
 GROQ_TOOLS = [
@@ -303,8 +361,121 @@ GROQ_TOOLS = [
             "description": "Aborts or cancels a scheduled Windows shutdown or restart.",
             "parameters": {"type": "object", "properties": {}}
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_remote_pc_file",
+            "description": "Reads contents of a file on the remote Windows PC. ONLY use when user explicitly asks to read or check a PC file.",
+            "parameters": {
+                "type": "object",
+                "properties": {"file_path": {"type": "string", "description": "Path or filename on PC"}},
+                "required": ["file_path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_remote_pc_directory",
+            "description": "Lists files in a directory on the remote PC (e.g. Desktop, Documents, Downloads).",
+            "parameters": {
+                "type": "object",
+                "properties": {"folder_path": {"type": "string", "description": "Folder alias (Desktop, Documents, Downloads) or path"}},
+                "required": ["folder_path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_remote_pc_files",
+            "description": "Searches for files on the remote Windows PC by query/name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Filename search term or pattern"},
+                    "search_in": {"type": "string", "description": "Folder alias (Desktop, Documents, Downloads, all)"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_remote_pc_file",
+            "description": "Writes text content to a file on the remote PC.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Destination file path on PC"},
+                    "content": {"type": "string", "description": "Text content to save"}
+                },
+                "required": ["file_path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "control_remote_pc_power",
+            "description": "Controls remote PC state (sleep, lock, hibernate, restart, shutdown, cancel).",
+            "parameters": {
+                "type": "object",
+                "properties": {"action": {"type": "string", "description": "Action: 'sleep', 'lock', 'hibernate', 'restart', 'shutdown', 'cancel', 'status'"}},
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scan_local_network",
+            "description": "Scans local Wi-Fi/LAN network and returns connected devices with IP addresses and hostnames.",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wake_pc_via_wol",
+            "description": "Sends Wake-on-LAN (WOL) magic packet to power on sleeping PC.",
+            "parameters": {
+                "type": "object",
+                "properties": {"mac_address": {"type": "string", "description": "Optional MAC address of PC"}}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ping_network_device",
+            "description": "Pings a network IP address or hostname to verify if it is online.",
+            "parameters": {
+                "type": "object",
+                "properties": {"host": {"type": "string", "description": "IP address or hostname"}},
+                "required": ["host"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "trigger_n8n_workflow",
+            "description": "Triggers an n8n automation workflow or webhook by name/ID with dynamic data.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workflow_id_or_name": {"type": "string", "description": "n8n workflow name or webhook slug"},
+                    "payload_data": {"type": "object", "description": "JSON payload to pass into workflow"}
+                },
+                "required": ["workflow_id_or_name"]
+            }
+        }
     }
 ]
+
 
 class Brain:
     """The dynamic multi-model intelligence, file access, and memory layer powering Wednesday."""
@@ -350,19 +521,31 @@ class Brain:
             return f"{combined}\n{memories_block}\nAlways utilize the above stored memories and context when answering."
         return combined
 
+    def _get_groq_tools(self) -> list:
+        tools = list(GROQ_TOOLS)
+        try:
+            mcp_defs = mcp_client.get_tool_definitions_for_groq()
+            if mcp_defs:
+                tools.extend(mcp_defs)
+        except Exception:
+            pass
+        return tools
+
     def _query_groq(self, model_name: str, messages: list, start_time: float, clean_prompt: str, source: str, session_id: str) -> Optional[str]:
         """Queries Groq with tool calling."""
         if not self.groq_client:
             return None
         try:
+            all_tools = self._get_groq_tools()
             completion = self.groq_client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                tools=GROQ_TOOLS,
-                tool_choice="auto",
+                tools=all_tools if all_tools else None,
+                tool_choice="auto" if all_tools else None,
                 temperature=0.7,
                 max_tokens=1024
             )
+
             msg = completion.choices[0].message
 
             if msg.tool_calls:

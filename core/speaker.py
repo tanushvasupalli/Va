@@ -153,6 +153,11 @@ class Speaker:
                 audio_data.extend(chunk["data"])
         return bytes(audio_data)
 
+    def generate_audio_bytes(self, text: str, voice: Optional[str] = None) -> bytes:
+        """Public synchronous helper to generate speech audio bytes for Telegram / Web APIs."""
+        return _run_async(self._generate_audio_bytes(text, voice=voice))
+
+
     def speak(self, text: str, voice: Optional[str] = None, stop_event: Optional[threading.Event] = None) -> bool:
         """
         Synthesizes text and plays audio out loud.

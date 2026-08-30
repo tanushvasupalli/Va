@@ -69,24 +69,32 @@ class AudioIO:
     def start_stream(self):
         """Starts continuous non-blocking microphone stream on the selected physical device."""
         if self.stream is None:
-            if self.device_index is None:
-                self.device_index = find_best_input_device()
-            self.stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype="float32",
-                blocksize=self.chunk_size,
-                device=self.device_index,
-                callback=self._audio_callback
-            )
-            self.stream.start()
+            try:
+                if self.device_index is None:
+                    self.device_index = find_best_input_device()
+                self.stream = sd.InputStream(
+                    samplerate=self.sample_rate,
+                    channels=self.channels,
+                    dtype="float32",
+                    blocksize=self.chunk_size,
+                    device=self.device_index,
+                    callback=self._audio_callback
+                )
+                self.stream.start()
+            except Exception as e:
+                print(f"[AudioIO Notice] Microphone stream unavailable ({e}). Continuing in headless/network mode.")
+                self.stream = None
 
     def stop_stream(self):
         """Stops the microphone stream."""
         if self.stream is not None:
-            self.stream.stop()
-            self.stream.close()
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
             self.stream = None
+
 
     def clear_queue(self):
         """Clears any residual audio frames in the queue."""

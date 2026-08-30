@@ -5,9 +5,12 @@ echo ========================================================
 echo   Pushing Wednesday AI Voice Agent to GitHub
 echo ========================================================
 echo.
+git add .
+git commit -m "Update Wednesday: Phone deployment, Telegram control, MCP & n8n integration, PC Companion & Network bridge"
 set GCM_OAUTH_FLOW=device
 set GCM_INTERACTIVE=always
 git push -u origin main
+
 echo.
 if %errorlevel% equ 0 (
     echo [SUCCESS] Code pushed successfully to GitHub!
