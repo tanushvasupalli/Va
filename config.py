@@ -17,8 +17,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 # ==========================================
 # LLM MODEL CONFIGURATION
 # ==========================================
-GEMINI_MODEL = "gemini-3.6-flash"
-GROQ_MODEL = "openai/gpt-oss-120b"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+GROQ_MODEL = "qwen/qwen3.8-27b"
 
 # ==========================================
 # AUDIO CONFIGURATION

@@ -1,7 +1,9 @@
 import os
+import io
 import re
 import subprocess
 import webbrowser
+from pathlib import Path
 from datetime import datetime
 
 def get_current_time_and_date() -> str:
@@ -257,62 +259,205 @@ def open_application_or_site(target: str) -> str:
     return f"Opening {target_clean.capitalize()} on your PC."
 
 # =========================================================================
-# SYSTEM POWER & STATE MANAGEMENT
+# SYSTEM POWER & STATE MANAGEMENT (SECURED WITH PIN AUTHENTICATION)
 # =========================================================================
-def shutdown_system(delay_seconds: int = 5) -> str:
-    """Schedules a Windows system shutdown."""
-    try:
-        subprocess.Popen(f"shutdown /s /f /t {int(delay_seconds)}", shell=True)
-        return f"Shutting down your PC in {delay_seconds} seconds. Goodbye!"
-    except Exception as e:
-        return f"Failed to initiate shutdown: {e}"
 
-def restart_system(delay_seconds: int = 5) -> str:
-    """Schedules a Windows system restart."""
+def execute_raw_power_action(action: str, delay_seconds: int = 5) -> str:
+    """Executes the raw Windows power action after security verification."""
+    act = action.lower().strip()
     try:
-        subprocess.Popen(f"shutdown /r /f /t {int(delay_seconds)}", shell=True)
-        return f"Restarting your PC in {delay_seconds} seconds."
+        if act in ("shutdown", "poweroff"):
+            subprocess.Popen(f"shutdown /s /f /t {int(delay_seconds)}", shell=True)
+            return f"PIN verified. Shutting down your PC in {delay_seconds} seconds. Goodbye!"
+        elif act in ("restart", "reboot"):
+            subprocess.Popen(f"shutdown /r /f /t {int(delay_seconds)}", shell=True)
+            return f"PIN verified. Restarting your PC in {delay_seconds} seconds."
+        elif act == "sleep":
+            import ctypes
+            res = ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+            if not res:
+                subprocess.Popen(
+                    'powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)"',
+                    shell=True
+                )
+            return "PIN verified. Putting your laptop to sleep now."
+        elif act == "hibernate":
+            subprocess.Popen("shutdown /h", shell=True)
+            return "PIN verified. Putting your laptop into hibernation now."
+        elif act == "lock":
+            import ctypes
+            ctypes.windll.user32.LockWorkStation()
+            return "Locking the Windows workstation."
+        elif act in ("cancel", "abort"):
+            subprocess.Popen("shutdown /a", shell=True)
+            return "Pending shutdown or restart has been cancelled."
+        return f"Unknown power action '{act}'."
     except Exception as e:
-        return f"Failed to initiate restart: {e}"
+        return f"Failed to execute power action: {e}"
 
-def sleep_system() -> str:
-    """Puts Windows PC into Sleep / Standby mode."""
-    try:
-        import ctypes
-        # powrprof.dll: SetSuspendState(bHibernate, bForce, bWakeupEventsDisabled)
-        # bHibernate = 0 for Sleep/Suspend
-        res = ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
-        if not res:
-            subprocess.Popen(
-                'powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)"',
-                shell=True
-            )
-        return "Putting the computer to sleep now."
-    except Exception as e:
-        return f"Failed to put system to sleep: {e}"
+def shutdown_system(delay_seconds: int = 5, pin: str = "") -> str:
+    """Schedules a Windows system shutdown. Requires security PIN."""
+    from core.security import verify_power_password
+    if not pin or not verify_power_password(pin):
+        return "Authentication required. Please provide your 4-digit security PIN to shut down your PC."
+    return execute_raw_power_action("shutdown", delay_seconds)
 
-def hibernate_system() -> str:
-    """Puts Windows PC into Hibernation mode."""
-    try:
-        subprocess.Popen("shutdown /h", shell=True)
-        return "Putting the computer into hibernation now."
-    except Exception as e:
-        return f"Failed to hibernate: {e}"
+def restart_system(delay_seconds: int = 5, pin: str = "") -> str:
+    """Schedules a Windows system restart. Requires security PIN."""
+    from core.security import verify_power_password
+    if not pin or not verify_power_password(pin):
+        return "Authentication required. Please provide your 4-digit security PIN to restart your PC."
+    return execute_raw_power_action("restart", delay_seconds)
+
+def sleep_system(pin: str = "") -> str:
+    """Puts Windows PC into Sleep mode. Requires security PIN."""
+    from core.security import verify_power_password
+    if not pin or not verify_power_password(pin):
+        return "Authentication required. Please provide your 4-digit security PIN to put your laptop to sleep."
+    return execute_raw_power_action("sleep")
+
+def hibernate_system(pin: str = "") -> str:
+    """Puts Windows PC into Hibernation mode. Requires security PIN."""
+    from core.security import verify_power_password
+    if not pin or not verify_power_password(pin):
+        return "Authentication required. Please provide your 4-digit security PIN to hibernate your PC."
+    return execute_raw_power_action("hibernate")
 
 def lock_system() -> str:
-    """Locks the Windows workstation immediately."""
-    try:
-        import ctypes
-        ctypes.windll.user32.LockWorkStation()
-        return "Locking the Windows workstation."
-    except Exception as e:
-        return f"Failed to lock workstation: {e}"
+    """Locks the Windows workstation immediately (does not require PIN)."""
+    return execute_raw_power_action("lock")
 
 def cancel_shutdown() -> str:
     """Cancels any pending Windows shutdown or restart."""
+    return execute_raw_power_action("cancel")
+
+def change_power_pin(current_pin: str, new_pin: str) -> str:
+    """Updates the 4-digit security PIN used for power actions."""
+    from core.security import set_power_password
+    ok, msg = set_power_password(current_pin, new_pin)
+    return msg
+
+# =========================================================================
+# SCREENSHOT CAPTURE ENGINE
+# =========================================================================
+
+def capture_desktop_screenshot(save_path: str = "") -> tuple[bytes | None, str]:
+    """
+    Captures a full-resolution screenshot of the active Windows desktop across all monitors.
+    Uses Win32 OpenInputDesktop and DISPLAY DC to ensure active desktop pixel capture
+    even when running in background threads or services.
+    Returns:
+        tuple[bytes | None, str]: (raw PNG bytes or None, metadata message)
+    """
+    img = None
     try:
-        subprocess.Popen("shutdown /a", shell=True)
-        return "Pending shutdown or restart has been cancelled."
+        import ctypes
+        from ctypes import wintypes
+        from PIL import Image
+
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+
+        # 1. Ensure Per-Monitor DPI Awareness
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+        # 2. Attach thread to active interactive input desktop
+        GENERIC_ALL = 0x10000000
+        hdesk = user32.OpenInputDesktop(0, False, GENERIC_ALL)
+        if hdesk:
+            user32.SetThreadDesktop(hdesk)
+
+        # 3. Create device context for active display
+        hdc_screen = gdi32.CreateDCA(b"DISPLAY", None, None, None)
+        if not hdc_screen:
+            hdc_screen = user32.GetDC(0)
+
+        # 4. Determine screen coordinates covering all virtual monitors
+        x = user32.GetSystemMetrics(76)  # SM_XVIRTUALSCREEN
+        y = user32.GetSystemMetrics(77)  # SM_YVIRTUALSCREEN
+        width = user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
+        height = user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
+
+        if width <= 0 or height <= 0:
+            width = user32.GetSystemMetrics(0)
+            height = user32.GetSystemMetrics(1)
+            x = 0
+            y = 0
+
+        # 5. Create compatible memory DC and bitmap
+        hmem_dc = gdi32.CreateCompatibleDC(hdc_screen)
+        hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, width, height)
+        old_bmp = gdi32.SelectObject(hmem_dc, hbitmap)
+
+        # 6. Copy screen bits with SRCCOPY and CAPTUREBLT (captures layered & translucent windows)
+        SRCCOPY = 0x00CC0020
+        CAPTUREBLT = 0x40000000
+        gdi32.BitBlt(hmem_dc, 0, 0, width, height, hdc_screen, x, y, SRCCOPY | CAPTUREBLT)
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [
+                ('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
+                ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
+                ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
+                ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD),
+            ]
+
+        bmi = BITMAPINFOHEADER()
+        bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bmi.biWidth = width
+        bmi.biHeight = -height
+        bmi.biPlanes = 1
+        bmi.biBitCount = 32
+        bmi.biCompression = 0
+
+        buffer = ctypes.create_string_buffer(width * height * 4)
+        gdi32.GetDIBits(hmem_dc, hbitmap, 0, height, buffer, ctypes.byref(bmi), 0)
+
+        # 7. Release Windows GDI handles
+        gdi32.SelectObject(hmem_dc, old_bmp)
+        gdi32.DeleteObject(hbitmap)
+        gdi32.DeleteDC(hmem_dc)
+        if hdc_screen:
+            gdi32.DeleteDC(hdc_screen)
+        if hdesk:
+            user32.CloseDesktop(hdesk)
+
+        # 8. Convert BGRA raw buffer to PIL RGB Image
+        img = Image.frombuffer('RGBA', (width, height), buffer, 'raw', 'BGRA', 0, 1).convert('RGB')
     except Exception as e:
-        return f"Failed to cancel shutdown: {e}"
+        # Fallback to PIL ImageGrab if available
+        try:
+            from PIL import ImageGrab
+            img = ImageGrab.grab(all_screens=True).convert('RGB')
+        except Exception:
+            return None, f"Failed to capture desktop screenshot: {e}"
+
+    if img is None:
+        return None, "Screenshot engine could not capture the desktop."
+
+    try:
+        width, height = img.size
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+
+        timestamp_str = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+        meta = f"Screenshot ({width}x{height}) captured at {timestamp_str}"
+
+        if save_path:
+            p = Path(save_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            img.save(str(p))
+            meta += f", saved to {p}"
+
+        return png_bytes, meta
+    except Exception as e:
+        return None, f"Failed to encode screenshot: {e}"
+
 

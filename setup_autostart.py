@@ -24,7 +24,7 @@ def enable_autostart() -> bool:
             f"$s.TargetPath = 'wscript.exe'; "
             f"$s.Arguments = '\"{str(VBS_SCRIPT)}\"'; "
             f"$s.WorkingDirectory = '{str(PROJECT_DIR)}'; "
-            f"$s.Description = 'Wednesday AI Voice Assistant Background Service'; "
+            f"$s.Description = 'Wednesday AI Telegram Bot Background Service'; "
             f"$s.Save()"
         )
 
@@ -37,8 +37,9 @@ def enable_autostart() -> bool:
 
         if TARGET_SHORTCUT.exists():
             print("==================================================")
-            print(" [SUCCESS] Auto-start on boot is now ENABLED!")
-            print(" Wednesday will start automatically in the background whenever your PC boots.")
+            print(" [SUCCESS] Telegram Bot Auto-start on boot is now ENABLED!")
+            print(" Wednesday Telegram Bot will start silently in the background on PC boot.")
+            print(" (No voice loop, dashboard, or console windows will launch on boot).")
             print(f" Startup Shortcut:  {TARGET_SHORTCUT}")
             print(f" Target Script:     {VBS_SCRIPT}")
             print(f" Working Directory: {PROJECT_DIR}")

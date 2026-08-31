@@ -1,37 +1,55 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ============================================================
-# WEDNESDAY AI - AUTOMATED TERMUX INSTALLER (4GB RAM PHONES)
+# WEDNESDAY AI - AUTOMATED ANDROID / TABLET INSTALLER (4GB RAM)
 # ============================================================
 
 echo "============================================================"
-echo "    Installing Wednesday AI Assistant on Android Termux     "
+echo "    Installing Wednesday AI Assistant on Android Tablet     "
 echo "============================================================"
 
 # 1. Update Termux repositories
-echo "[1/5] Updating Termux packages..."
+echo "[1/6] Updating Termux packages..."
 pkg update -y && pkg upgrade -y
 
-# 2. Install essential compilers and dependencies
-echo "[2/5] Installing Python, Git, FFmpeg, and build tools..."
-pkg install -y python git ffmpeg clang libffi openssl termux-api
+# 2. Install essential compilers, build tools, prebuilt binaries & utilities
+echo "[2/6] Installing Python, Git, FFmpeg, Clang, Net-Tools & Prebuilt Packages..."
+pkg install -y python python-pip python-numpy python-pillow postgresql git ffmpeg clang libffi openssl termux-api net-tools nmap
 
-# 3. Create Python Virtual Environment
-echo "[3/5] Setting up Python virtual environment..."
-python -m venv venv
+# 3. Create Python Virtual Environment with system site packages
+echo "[3/6] Setting up optimized Python virtual environment..."
+python -m venv --system-site-packages venv
 source venv/bin/activate
 pip install --upgrade pip
 
-# 4. Install requirements
-echo "[4/5] Installing Python libraries..."
-pip install -r requirements.txt
+# 4. Install requirements with robust fallback
+echo "[4/6] Installing Python libraries (Optimized for Android)..."
+pip install -r requirements.txt || {
+    echo "[!] Some desktop-only packages were skipped. Installing core runtime packages..."
+    pip install edge-tts soundfile numpy groq google-genai python-dotenv requests fastapi uvicorn websockets duckduckgo_search beautifulsoup4 SpeechRecognition psutil python-telegram-bot aiohttp psycopg2-binary Pillow
+}
 
-# 5. Acquire Wake Lock
-echo "[5/5] Acquiring Termux wake lock (prevents CPU sleep)..."
-termux-wake-lock
+# 5. Setup Termux:Boot (Auto-start on Tablet Reboot)
+echo "[5/6] Configuring auto-start on boot (Termux:Boot)..."
+mkdir -p ~/.termux/boot
+CURRENT_DIR="$(pwd)"
+cat << 'EOF' > ~/.termux/boot/start_wednesday.sh
+#!/data/data/com.termux/files/usr/bin/bash
+export PYTHONOPTIMIZE=1
+termux-wake-lock 2>/dev/null
+cd CURRENT_DIR_PLACEHOLDER
+./start_phone.sh > wednesday_boot.log 2>&1 &
+EOF
+sed -i "s|CURRENT_DIR_PLACEHOLDER|$CURRENT_DIR|g" ~/.termux/boot/start_wednesday.sh
+chmod +x ~/.termux/boot/start_wednesday.sh
+
+# 6. Acquire Wake Lock
+echo "[6/6] Acquiring Termux wake lock (prevents CPU sleep)..."
+termux-wake-lock 2>/dev/null
 
 echo ""
 echo "============================================================"
-echo " [SUCCESS] Installation Complete!"
-echo " 1. Edit your credentials:  nano .env"
-echo " 2. Start Wednesday:       ./start_phone.sh"
+echo " [SUCCESS] Android Tablet Installation Complete!"
+echo " 1. Configure .env credentials:  nano .env"
+echo " 2. Start Wednesday 24/7 daemon: ./start_phone.sh"
 echo "============================================================"
+

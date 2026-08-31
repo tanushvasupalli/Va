@@ -98,11 +98,14 @@ def download_pc_file_bytes(file_path: str) -> Tuple[Optional[bytes], str]:
     except Exception as e:
         return None, f"Connection failed: {e}"
 
-def control_remote_pc_power(action: str = "status") -> str:
-    """Controls power/state of the remote PC (sleep, lock, hibernate, restart, shutdown, cancel)."""
+def control_remote_pc_power(action: str = "status", pin: Optional[str] = None) -> str:
+    """Controls power/state of the remote PC (sleep, lock, hibernate, restart, shutdown, cancel). Requires PIN for power actions."""
     url = f"{_pc_base_url()}/power"
     try:
-        res = requests.post(url, json={"action": action}, headers=_get_pc_headers(), timeout=10)
+        payload = {"action": action}
+        if pin:
+            payload["pin"] = str(pin).strip()
+        res = requests.post(url, json=payload, headers=_get_pc_headers(), timeout=10)
         if res.status_code == 200:
             return res.json().get("message", f"Command '{action}' executed on PC.")
         return f"Error controlling PC power: {res.text}"
@@ -123,3 +126,25 @@ def exec_remote_pc_command(command: str) -> str:
         return f"PC Command failed (HTTP {res.status_code}): {res.text}"
     except Exception as e:
         return f"Failed to execute command on PC: {e}"
+
+def fetch_pc_screenshot_bytes() -> Tuple[Optional[bytes], str]:
+    """
+    Fetches raw screenshot PNG bytes from the remote PC Companion agent,
+    falling back to local desktop capture if running on the host PC directly.
+    """
+    # 1. Try remote PC companion endpoint
+    url = f"{_pc_base_url()}/screenshot"
+    try:
+        res = requests.get(url, headers=_get_pc_headers(), timeout=10)
+        if res.status_code == 200 and len(res.content) > 100:
+            meta = res.headers.get("X-Screenshot-Meta", "PC Screenshot captured.")
+            return res.content, meta
+    except Exception:
+        pass
+
+    # 2. Fallback to local desktop capture
+    try:
+        from tools.system_tools import capture_desktop_screenshot
+        return capture_desktop_screenshot()
+    except Exception as e:
+        return None, f"Failed to capture screenshot: {e}"

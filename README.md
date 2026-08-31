@@ -85,6 +85,7 @@ On your Windows PC:
 | `/pc <action>` | Control PC power | `/pc sleep` or `/pc lock` |
 | `/wake` | Send Wake-on-LAN to wake up PC | `/wake` |
 | `/scan` | Discover all active devices on local Wi-Fi | `/scan` |
+| `/portscan <host>` | Scan open ports & services on any device | `/portscan 192.168.1.50` |
 | `/ping <host>` | Test connection to IP or hostname | `/ping 192.168.1.1` |
 | `/n8n <workflow>` | Trigger an n8n automation workflow | `/n8n sync_notion {"done": true}` |
 | `/mcp` | List connected MCP tools | `/mcp` |
@@ -92,6 +93,8 @@ On your Windows PC:
 | `/remember <t> <f>` | Store a new persistent memory | `/remember work Lead dev on AI` |
 | `/exec <cmd>` | Execute terminal command on phone/host | `/exec git pull` |
 | `/restart` | Hot-restart Wednesday service | `/restart` |
+
+> 📱 For the dedicated 24/7 setup guide on Android Vivo Y15 (Funtouch OS power settings & autostart), see [VIVO_Y15_GUIDE.md](file:///c:/Users/tanus/OneDrive/Documents/Va/VIVO_Y15_GUIDE.md).
 
 ---
 

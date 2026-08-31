@@ -7,11 +7,16 @@ from pathlib import Path
 LOCK_FILE = Path(__file__).resolve().parent.parent / "data" / "wednesday.lock"
 
 def optimize_process():
-    """Sets process priority to below normal to guarantee zero lag on other Windows apps/games."""
+    """Sets process priority to polite level to guarantee minimal battery and CPU usage across Windows/Linux/Android."""
     try:
         p = psutil.Process(os.getpid())
         if sys.platform == "win32":
             p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+        else:
+            try:
+                p.nice(10)  # Polite scheduling priority on Linux/Android
+            except Exception:
+                pass
     except Exception as e:
         print(f"[Optimizer Notice] Priority set: {e}")
 

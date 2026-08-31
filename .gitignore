@@ -158,4 +158,11 @@ data/*.lock
 *.lock
 data/profiles/*.json
 !data/profiles/.gitkeep
+data/recordings/
+*.mp4
+*.wav
+*.zip
+*.log
+wednesday_exact.zip
+
 

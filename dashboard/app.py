@@ -6,10 +6,11 @@ import asyncio
 import threading
 import webbrowser
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional, Any
+import requests
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Body, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 import uvicorn
 
 import atexit
@@ -89,6 +90,159 @@ async def get_dashboard():
     if index_path.exists():
         return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Dashboard template not found.</h1>")
+
+@app.get("/telegram", response_class=HTMLResponse)
+async def get_telegram_dashboard():
+    telegram_path = TEMPLATES_DIR / "telegram.html"
+    if telegram_path.exists():
+        return HTMLResponse(content=telegram_path.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Telegram Dashboard template not found.</h1>")
+
+# =============================================================================
+# TELEGRAM DASHBOARD REST APIS
+# =============================================================================
+
+@app.get("/api/telegram/stats")
+async def api_get_telegram_stats():
+    """Returns live metrics and configuration status for the Telegram Bot."""
+    stats = storage.get_telegram_stats()
+    token = getattr(config, "TELEGRAM_BOT_TOKEN", "").strip()
+    configured = bool(token and token != "your_telegram_bot_token_here")
+    allowed_user = getattr(config, "TELEGRAM_ALLOWED_USER_ID", "All (Open)")
+    return {
+        "status": "success",
+        "stats": stats,
+        "bot": {
+            "configured": configured,
+            "allowed_user": str(allowed_user) if allowed_user else "All (Open)",
+            "model": app_state["model_name"] or config.GEMINI_MODEL,
+            "voice": app_state["voice_name"] or config.TTS_VOICE,
+            "muted": app_state["voice_muted"]
+        }
+    }
+
+@app.get("/api/telegram/messages")
+async def api_get_telegram_messages(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    search: Optional[str] = Query(None),
+    filter: Optional[str] = Query("all")
+):
+    """Retrieves filtered, searchable Telegram conversation history."""
+    messages = storage.get_telegram_messages(limit=limit, offset=offset, search=search, source_filter=filter)
+    return {"status": "success", "messages": messages, "count": len(messages)}
+
+@app.post("/api/telegram/ask")
+async def api_ask_telegram(payload: dict = Body(...)):
+    """Simulates/triggers an interactive conversation turn as Telegram User."""
+    user_prompt = payload.get("prompt", "").strip()
+    sender_name = payload.get("sender", "Tanush")
+    is_voice = payload.get("is_voice", False)
+    if not user_prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    source = "voice_telegram" if is_voice else "telegram"
+    start_time = time.time()
+    reply = brain.query(user_prompt, source=source, session_id="telegram", speaker=sender_name, is_owner=True)
+    latency = round(time.time() - start_time, 2)
+
+    broadcast_sync({
+        "type": "telegram_update",
+        "action": "new_message",
+        "prompt": user_prompt,
+        "reply": reply,
+        "latency": latency
+    })
+
+    return {
+        "status": "success",
+        "user_prompt": user_prompt,
+        "reply": reply,
+        "latency": latency,
+        "source": source
+    }
+
+@app.post("/api/telegram/send")
+async def api_send_to_telegram(payload: dict = Body(...)):
+    """Dispatches a direct message to authorized Telegram user via Telegram Bot API."""
+    text = payload.get("text", "").strip()
+    chat_id = payload.get("chat_id") or getattr(config, "TELEGRAM_ALLOWED_USER_ID", "")
+    token = getattr(config, "TELEGRAM_BOT_TOKEN", "").strip()
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    if not token or token == "your_telegram_bot_token_here":
+        raise HTTPException(status_code=400, detail="Telegram Bot Token is not configured in .env")
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="No Telegram Chat ID specified")
+
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        resp = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
+        res_data = resp.json()
+        if not res_data.get("ok"):
+            return JSONResponse(status_code=400, content={"status": "error", "detail": res_data.get("description", "Failed to send")})
+
+        storage.add_message("assistant", text, source="telegram_manual", session_id="telegram")
+        broadcast_sync({"type": "telegram_update", "action": "sent"})
+        return {"status": "success", "message": "Dispatched to Telegram"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/telegram/messages/{message_id}")
+async def api_delete_telegram_message(message_id: int):
+    """Deletes a specific message by ID."""
+    ok = storage.delete_message_by_id(message_id)
+    if ok:
+        broadcast_sync({"type": "telegram_update", "action": "delete", "id": message_id})
+        return {"status": "success"}
+    raise HTTPException(status_code=500, detail="Failed to delete message")
+
+@app.post("/api/telegram/clear")
+async def api_clear_telegram():
+    """Clears all Telegram conversation logs."""
+    ok = storage.clear_telegram_history()
+    if ok:
+        broadcast_sync({"type": "telegram_update", "action": "clear"})
+        return {"status": "success"}
+    raise HTTPException(status_code=500, detail="Failed to clear history")
+
+@app.get("/api/telegram/export")
+async def api_export_telegram(format: str = Query("json")):
+    """Exports conversation transcripts as JSON or text."""
+    messages = storage.get_telegram_messages(limit=1000)
+    if format.lower() == "txt":
+        lines = ["# Wednesday AI - Telegram Conversations Transcript", f"# Exported: {time.strftime('%Y-%m-%d %I:%M %p')}\n"]
+        for m in messages:
+            sender = "Wednesday AI" if m["role"] == "assistant" else "You"
+            src_tag = f" [{m['source']}]" if m.get("source") else ""
+            lat_tag = f" ({m['latency']}s)" if m.get("latency") and m["role"] == "assistant" else ""
+            lines.append(f"[{m.get('formatted_time', m.get('timestamp', ''))}] {sender}{src_tag}{lat_tag}:")
+            lines.append(f"{m['content']}\n")
+        return PlainTextResponse("\n".join(lines), headers={"Content-Disposition": "attachment; filename=telegram_conversations.txt"})
+# =============================================================================
+# SECURITY & PIN MANAGEMENT APIS
+# =============================================================================
+
+@app.post("/api/security/pin")
+async def api_change_security_pin(payload: dict = Body(...)):
+    """Updates the 4-digit security PIN used for power actions."""
+    from core.security import set_power_password
+    current_pin = payload.get("current_pin", "").strip()
+    new_pin = payload.get("new_pin", "").strip()
+    if not current_pin or not new_pin:
+        raise HTTPException(status_code=400, detail="Both current_pin and new_pin are required")
+    
+    ok, msg = set_power_password(current_pin, new_pin)
+    if ok:
+        return {"status": "success", "message": msg}
+    return JSONResponse(status_code=400, content={"status": "error", "detail": msg})
+
+@app.get("/api/security/status")
+async def api_security_status():
+    """Returns security PIN status."""
+    return {"status": "success", "pin_protection_active": True}
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

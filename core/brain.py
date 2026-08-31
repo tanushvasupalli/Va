@@ -15,7 +15,18 @@ from tools.system_tools import (
     sleep_system,
     hibernate_system,
     lock_system,
-    cancel_shutdown
+    cancel_shutdown,
+    change_power_pin,
+    execute_raw_power_action
+)
+from core.security import (
+    get_power_password,
+    verify_power_password,
+    set_power_password,
+    extract_pin_from_text,
+    set_pending_power_action,
+    get_pending_power_action,
+    clear_pending_power_action
 )
 from tools.memory_tools import remember_user_fact, recall_memories, forget_memory_topic
 from tools.file_tools import read_local_file, list_local_directory, search_local_files, write_local_file
@@ -28,7 +39,19 @@ from tools.web_tools import (
     google_search_in_browser
 )
 
-from tools.n8n_tools import trigger_n8n_workflow, call_n8n_webhook, list_n8n_workflows
+from tools.n8n_tools import (
+    trigger_n8n_workflow,
+    call_n8n_webhook,
+    list_n8n_workflows,
+    search_n8n_templates,
+    get_n8n_template,
+    search_n8n_nodes,
+    get_n8n_node_schema,
+    validate_n8n_workflow,
+    create_and_deploy_n8n_workflow,
+    activate_n8n_workflow,
+    deactivate_n8n_workflow
+)
 from tools.pc_bridge_tools import (
     read_remote_pc_file,
     list_remote_pc_directory,
@@ -40,6 +63,7 @@ from tools.pc_bridge_tools import (
 )
 from tools.network_tools import (
     scan_local_network,
+    port_scan_device,
     wake_pc_via_wol,
     ping_network_device,
     send_network_http_request
@@ -87,13 +111,15 @@ def execute_tool(name: str, args: dict) -> str:
         elif "writeremotepc" in clean_name or "writepcfile" in clean_name:
             return write_remote_pc_file(args.get("file_path", "notes.txt"), args.get("content", ""))
         elif "controlremotepc" in clean_name or "pcpower" in clean_name:
-            return control_remote_pc_power(args.get("action", "status"))
+            return control_remote_pc_power(args.get("action", "status"), pin=args.get("pin", None))
         elif "executepccommand" in clean_name or "execpccommand" in clean_name:
             return exec_remote_pc_command(args.get("command", str(args)))
         elif "checkpcstatus" in clean_name:
             return check_pc_status()
 
         # Local Network & Device Tools
+        elif "portscan" in clean_name or "scanport" in clean_name:
+            return port_scan_device(args.get("host", str(args)), args.get("ports", None))
         elif "scanlocalnetwork" in clean_name or "scannetwork" in clean_name or "wifiscan" in clean_name:
             return scan_local_network(args.get("subnet", ""))
         elif "wakepc" in clean_name or "wakeonlan" in clean_name or "wol" in clean_name:
@@ -103,7 +129,23 @@ def execute_tool(name: str, args: dict) -> str:
         elif "networkhttprequest" in clean_name or "iotrequest" in clean_name:
             return send_network_http_request(args.get("url", ""), args.get("method", "GET"), args.get("json_data", None))
 
-        # n8n Automation Tools
+        # n8n Automation & MCP Tools
+        elif "createn8nworkflow" in clean_name or "deployn8nworkflow" in clean_name or "createanddeployn8n" in clean_name:
+            return create_and_deploy_n8n_workflow(args.get("name", "Automated Workflow"), args.get("workflow_json", args.get("workflow", {})), args.get("activate", True))
+        elif "activaten8n" in clean_name:
+            return activate_n8n_workflow(args.get("workflow_id", str(args)))
+        elif "deactivaten8n" in clean_name:
+            return deactivate_n8n_workflow(args.get("workflow_id", str(args)))
+        elif "getn8ntemplate" in clean_name:
+            return get_n8n_template(args.get("template_id", str(args)))
+        elif "searchn8ntemplates" in clean_name or "n8ntemplates" in clean_name:
+            return search_n8n_templates(args.get("query", str(args)), args.get("task", ""), args.get("complexity", ""))
+        elif "searchn8nnodes" in clean_name or "n8nnodes" in clean_name:
+            return search_n8n_nodes(args.get("query", str(args)), args.get("category", ""))
+        elif "getn8nnodeschema" in clean_name or "n8nnodeschema" in clean_name:
+            return get_n8n_node_schema(args.get("node_type", str(args)))
+        elif "validaten8nworkflow" in clean_name or "validaten8n" in clean_name:
+            return validate_n8n_workflow(args.get("workflow_json", args.get("workflow", "")))
         elif "triggern8n" in clean_name or "n8nworkflow" in clean_name:
             return trigger_n8n_workflow(args.get("workflow_id_or_name", str(args)), args.get("payload_data", None))
         elif "calln8nwebhook" in clean_name or "n8nwebhook" in clean_name:
@@ -112,8 +154,26 @@ def execute_tool(name: str, args: dict) -> str:
             return list_n8n_workflows()
 
         # Model Context Protocol (MCP) Tools
+        elif "connectmcpserver" in clean_name or "addmcpserver" in clean_name:
+            from tools.mcp_tools import connect_mcp_server
+            return connect_mcp_server(args.get("server_url", str(args)))
+        elif "disconnectmcpserver" in clean_name or "removemcpserver" in clean_name:
+            from tools.mcp_tools import disconnect_mcp_server
+            return disconnect_mcp_server(args.get("server_url", str(args)))
         elif clean_name.startswith("mcp") or name.startswith("mcp_"):
             return execute_mcp_tool(name, args)
+
+        # Settings & Config Tools
+        elif "updatesystemsetting" in clean_name or "configuresetting" in clean_name or "setconfig" in clean_name:
+            from core.config_manager import set_config_value
+            k = args.get("key", "")
+            v = args.get("value", "")
+            ok, msg = set_config_value(k, v)
+            return msg
+        elif "getsystemsetting" in clean_name or "getconfig" in clean_name:
+            from core.config_manager import get_config_value
+            k = args.get("key", "")
+            return f"{k} = {get_config_value(k, mask_secrets=True)}"
 
         # File Tools (Local)
         elif "readlocalfile" in clean_name or "readfile" in clean_name:
@@ -151,15 +211,46 @@ def execute_tool(name: str, args: dict) -> str:
         elif "time" in clean_name or "date" in clean_name:
             return get_current_time_and_date()
         
-        # System Power & State Tools
+        # Screen Vision & UI Control Tools
+        elif "getscreenview" in clean_name or "analyzescreen" in clean_name or "seescreen" in clean_name:
+            from tools.vision_tools import get_screen_view
+            return get_screen_view(args.get("prompt", args.get("question", "")))
+        elif "clickscreenitem" in clean_name or "clickitem" in clean_name or "clickelement" in clean_name:
+            from tools.ui_control_tools import click_screen_item
+            return click_screen_item(args.get("target_description", str(args)), args.get("click_type", "single"))
+        elif "clickcoordinates" in clean_name or "clickxy" in clean_name:
+            from tools.ui_control_tools import click_coordinates
+            return click_coordinates(int(args.get("x", 0)), int(args.get("y", 0)), args.get("click_type", "single"))
+        elif "typetextintoui" in clean_name or "typetext" in clean_name:
+            from tools.ui_control_tools import type_text_into_ui
+            return type_text_into_ui(args.get("text", ""), args.get("press_enter", False))
+        elif "presshotkey" in clean_name or "presskey" in clean_name:
+            from tools.ui_control_tools import press_hotkey
+            return press_hotkey(args.get("hotkey", str(args)))
+        elif "scrollscreen" in clean_name:
+            from tools.ui_control_tools import scroll_screen
+            return scroll_screen(int(args.get("clicks", -3)))
+        elif "recordscreenvideo" in clean_name or "recordscreen" in clean_name:
+            from tools.screen_recorder import record_and_send_telegram_sync
+            return record_and_send_telegram_sync(int(args.get("duration_seconds", 10)), args.get("caption", ""))
+
+        # Screenshot Tool
+        elif "screenshot" in clean_name or "capturescreen" in clean_name:
+            from core.telegram_bot import send_screenshot_to_owner_sync
+            caption = args.get("caption", "📸 Real-time PC Screenshot")
+            return send_screenshot_to_owner_sync(caption)
+
+        # System Power & State Tools (PIN Protected)
+        elif "changepowerpin" in clean_name or "changepin" in clean_name or "changepassword" in clean_name:
+            return change_power_pin(args.get("current_pin", ""), args.get("new_pin", ""))
         elif "shutdown" in clean_name and "cancel" not in clean_name and "abort" not in clean_name:
-            return shutdown_system(args.get("delay_seconds", 5))
+            return shutdown_system(args.get("delay_seconds", 5), pin=args.get("pin", ""))
         elif "restart" in clean_name or "reboot" in clean_name:
-            return restart_system(args.get("delay_seconds", 5))
+            return restart_system(args.get("delay_seconds", 5), pin=args.get("pin", ""))
         elif "sleep" in clean_name or "suspend" in clean_name:
-            return sleep_system()
+            return sleep_system(pin=args.get("pin", ""))
         elif "hibernate" in clean_name:
-            return hibernate_system()
+            return hibernate_system(pin=args.get("pin", ""))
         elif "lock" in clean_name:
             return lock_system()
         elif "cancelshutdown" in clean_name or "abortshutdown" in clean_name:
@@ -307,11 +398,27 @@ GROQ_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "shutdown_system",
-            "description": "Shuts down / powers off the Windows PC. Use when user asks to turn off, shut down, or power off the computer.",
+            "name": "change_power_pin",
+            "description": "Changes the 4-digit security PIN required for PC shutdown, restart, and sleep operations.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "current_pin": {"type": "string", "description": "Current 4-digit security PIN"},
+                    "new_pin": {"type": "string", "description": "New 4-digit security PIN"}
+                },
+                "required": ["current_pin", "new_pin"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shutdown_system",
+            "description": "Shuts down / powers off the Windows PC. Requires 4-digit security PIN.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pin": {"type": "string", "description": "4-digit security PIN (default 2206)"},
                     "delay_seconds": {"type": "integer", "description": "Delay in seconds before shutting down (default 5)"}
                 }
             }
@@ -321,10 +428,11 @@ GROQ_TOOLS = [
         "type": "function",
         "function": {
             "name": "restart_system",
-            "description": "Restarts / reboots the Windows PC. Use when user asks to restart or reboot the computer.",
+            "description": "Restarts / reboots the Windows PC. Requires 4-digit security PIN.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "pin": {"type": "string", "description": "4-digit security PIN (default 2206)"},
                     "delay_seconds": {"type": "integer", "description": "Delay in seconds before restarting (default 5)"}
                 }
             }
@@ -334,16 +442,26 @@ GROQ_TOOLS = [
         "type": "function",
         "function": {
             "name": "sleep_system",
-            "description": "Puts the Windows PC into Sleep / Standby mode immediately.",
-            "parameters": {"type": "object", "properties": {}}
+            "description": "Puts the Windows PC into Sleep / Standby mode immediately. Requires 4-digit security PIN.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pin": {"type": "string", "description": "4-digit security PIN (default 2206)"}
+                }
+            }
         }
     },
     {
         "type": "function",
         "function": {
             "name": "hibernate_system",
-            "description": "Puts the Windows PC into Hibernation mode.",
-            "parameters": {"type": "object", "properties": {}}
+            "description": "Puts the Windows PC into Hibernation mode. Requires 4-digit security PIN.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pin": {"type": "string", "description": "4-digit security PIN (default 2206)"}
+                }
+            }
         }
     },
     {
@@ -432,8 +550,23 @@ GROQ_TOOLS = [
         "type": "function",
         "function": {
             "name": "scan_local_network",
-            "description": "Scans local Wi-Fi/LAN network and returns connected devices with IP addresses and hostnames.",
+            "description": "Scans local Wi-Fi/LAN network and returns connected devices with IP addresses, hostnames, and active services.",
             "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "port_scan_device",
+            "description": "Scans a specific device on the network for open ports and services (e.g. PC companion, Web, SSH, Home Assistant, RTSP).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "host": {"type": "string", "description": "Target IP address or hostname to scan"},
+                    "ports": {"type": "string", "description": "Optional comma-separated list of ports"}
+                },
+                "required": ["host"]
+            }
         }
     },
     {
@@ -473,7 +606,238 @@ GROQ_TOOLS = [
                 "required": ["workflow_id_or_name"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_n8n_templates",
+            "description": "Searches across 2,709+ curated n8n automation templates for workflows, triggers, and integrations.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keywords describing the automation (e.g. 'telegram alert', 'lead generation', 'slack sync')"},
+                    "task": {"type": "string", "description": "Optional task category (e.g. 'webhook_processing', 'data_sync')"},
+                    "complexity": {"type": "string", "description": "Optional complexity ('simple', 'medium', 'complex')"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_n8n_nodes",
+            "description": "Searches across 2,616+ n8n workflow integration nodes (e.g. 'telegram', 'slack', 'gmail', 'postgres', 'openai').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Node name or keyword"},
+                    "category": {"type": "string", "description": "Optional category filter"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_n8n_node_schema",
+            "description": "Gets properties, operations, documentation, and schema for a specific n8n node.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_type": {"type": "string", "description": "n8n node type (e.g. 'n8n-nodes-base.telegram', 'n8n-nodes-base.slack')"}
+                },
+                "required": ["node_type"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "validate_n8n_workflow",
+            "description": "Validates the structure, nodes, and connections of an n8n workflow.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workflow_json": {"type": "string", "description": "Workflow JSON string or object to validate"}
+                },
+                "required": ["workflow_json"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_and_deploy_n8n_workflow",
+            "description": "Autonomously creates, saves, hosts, and activates a workflow locally in your n8n instance via REST API without manual steps.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Workflow name (e.g. 'Telegram AI News Alert')"},
+                    "workflow_json": {"type": "string", "description": "Valid workflow JSON containing nodes, connections, and settings"},
+                    "activate": {"type": "boolean", "description": "Whether to immediately activate and host the workflow (default true)"}
+                },
+                "required": ["name", "workflow_json"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_n8n_template",
+            "description": "Retrieves the complete workflow JSON template from n8n-mcp library by numeric template ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "template_id": {"type": "integer", "description": "Template numeric ID (e.g. 4740)"}
+                },
+                "required": ["template_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "activate_n8n_workflow",
+            "description": "Activates a workflow in n8n so it starts running/listening locally.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string", "description": "ID of workflow to activate"}
+                },
+                "required": ["workflow_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "take_screenshot_and_send_telegram",
+            "description": "Captures a live screenshot of the PC desktop and sends the photo directly to the user's Telegram chat.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "caption": {"type": "string", "description": "Optional description or note for the screenshot"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_system_setting",
+            "description": "Updates a system configuration setting or environment variable (e.g. TTS_VOICE, GROQ_MODEL, GEMINI_MODEL, MUTE_AGENT_VOICE).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Setting name / variable key (e.g. TTS_VOICE, GROQ_MODEL)"},
+                    "value": {"type": "string", "description": "New value to assign"}
+                },
+                "required": ["key", "value"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "connect_mcp_server",
+            "description": "Connects and registers a new Model Context Protocol (MCP) server by URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "server_url": {"type": "string", "description": "Full URL of the MCP server (e.g. http://localhost:8000/sse)"}
+                },
+                "required": ["server_url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_screen_view",
+            "description": "Analyzes the laptop's live screen with AI Vision to describe what's open, read text, identify UI elements, or diagnose errors.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Specific question or analysis prompt for the screen view"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "click_screen_item",
+            "description": "Uses AI spatial vision to locate any icon, button, menu item, or text on the screen and clicks it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_description": {"type": "string", "description": "Name or description of the icon/button to click (e.g. 'Start button', 'Google Chrome icon', 'Submit button')"},
+                    "click_type": {"type": "string", "description": "Click type: single, double, right, middle", "default": "single"}
+                },
+                "required": ["target_description"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "type_text_into_ui",
+            "description": "Types text into the active focused window or input field on the laptop.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to type"},
+                    "press_enter": {"type": "boolean", "description": "Whether to press Enter after typing"}
+                },
+                "required": ["text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "press_hotkey",
+            "description": "Simulates pressing keyboard shortcuts or special keys (e.g. 'ctrl+c', 'win+d', 'alt+tab', 'enter', 'esc').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hotkey": {"type": "string", "description": "Key or hotkey combination to press"}
+                },
+                "required": ["hotkey"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "record_screen_video_and_send_telegram",
+            "description": "Records the laptop desktop screen for a specified duration into an MP4 video and sends it to the user's Telegram chat.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "duration_seconds": {"type": "integer", "description": "Duration in seconds (e.g. 5 to 30 seconds)", "default": 10},
+                    "caption": {"type": "string", "description": "Optional caption for the video"}
+                }
+            }
+        }
     }
+]
+
+GROQ_MODELS_CASCADE = [
+    "qwen/qwen3.8-27b",
+    "groq/compound-mini",
+    "qwen/qwen3.6-27b",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b"
+]
+
+GEMINI_MODELS_CASCADE = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash"
 ]
 
 
@@ -531,20 +895,31 @@ class Brain:
             pass
         return tools
 
-    def _query_groq(self, model_name: str, messages: list, start_time: float, clean_prompt: str, source: str, session_id: str) -> Optional[str]:
-        """Queries Groq with tool calling."""
+    def _query_groq_single(self, model_name: str, messages: list, start_time: float, clean_prompt: str, source: str, session_id: str) -> Optional[str]:
+        """Queries a single Groq model with tool calling."""
         if not self.groq_client:
             return None
         try:
             all_tools = self._get_groq_tools()
-            completion = self.groq_client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                tools=all_tools if all_tools else None,
-                tool_choice="auto" if all_tools else None,
-                temperature=0.7,
-                max_tokens=1024
-            )
+            try:
+                completion = self.groq_client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    tools=all_tools if all_tools else None,
+                    tool_choice="auto" if all_tools else None,
+                    temperature=0.7,
+                    max_tokens=1024
+                )
+            except Exception as te:
+                if "tool calling" in str(te).lower() or "not supported" in str(te).lower():
+                    completion = self.groq_client.chat.completions.create(
+                        model=model_name,
+                        messages=messages,
+                        temperature=0.7,
+                        max_tokens=1024
+                    )
+                else:
+                    raise te
 
             msg = completion.choices[0].message
 
@@ -600,8 +975,19 @@ class Brain:
             print(f"[Brain Notice] Groq query ({model_name}): {e}")
         return None
 
-    def _query_gemini(self, model_name: str, history_turns: list, system_instruction: str, start_time: float, clean_prompt: str, source: str, session_id: str) -> Optional[str]:
-        """Queries Google Gemini."""
+    def _query_groq(self, model_name: str, messages: list, start_time: float, clean_prompt: str, source: str, session_id: str) -> Optional[str]:
+        """Queries Groq with automatic cascading fallback across fast models."""
+        models_to_try = [model_name] + [m for m in GROQ_MODELS_CASCADE if m != model_name]
+        for m in models_to_try:
+            import copy
+            msg_copy = copy.deepcopy(messages)
+            res = self._query_groq_single(m, msg_copy, start_time, clean_prompt, source, session_id)
+            if res:
+                return res
+        return None
+
+    def _query_gemini_single(self, model_name: str, history_turns: list, system_instruction: str, start_time: float, clean_prompt: str, source: str, session_id: str) -> Optional[str]:
+        """Queries a single Google Gemini model."""
         if not self.gemini_client:
             return None
         try:
@@ -637,6 +1023,15 @@ class Brain:
             print(f"[Brain Notice] Gemini query ({model_name}): {e}")
         return None
 
+    def _query_gemini(self, model_name: str, history_turns: list, system_instruction: str, start_time: float, clean_prompt: str, source: str, session_id: str) -> Optional[str]:
+        """Queries Gemini with cascading fallback across active Gemini models."""
+        models_to_try = [model_name] + [m for m in GEMINI_MODELS_CASCADE if m != model_name]
+        for m in models_to_try:
+            res = self._query_gemini_single(m, history_turns, system_instruction, start_time, clean_prompt, source, session_id)
+            if res:
+                return res
+        return None
+
     def query(self, user_input: str, source: str = "text", session_id: str = "default", model_override: Optional[str] = None, speaker: Optional[str] = None, is_owner: bool = True) -> str:
         """
         Processes user query with multi-turn context window, on-demand local file access, speaker recognition, and persistent memory.
@@ -648,62 +1043,80 @@ class Brain:
         start_time = time.time()
         chosen_model = model_override or self.active_model
 
-        # Fast direct action dispatch for system power and state commands
+        # 1. Check if there is an active pending power action awaiting security PIN
+        pending = get_pending_power_action(session_id)
+        candidate_pin = extract_pin_from_text(clean_prompt)
+
+        if pending and candidate_pin:
+            clear_pending_power_action(session_id)
+            if verify_power_password(candidate_pin):
+                action = pending["action"]
+                delay = pending.get("delay_seconds", 5)
+                reply = execute_raw_power_action(action, delay)
+            else:
+                reply = "Authentication failed: incorrect security PIN. Power command cancelled."
+            storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
+            storage.add_message("assistant", reply, latency=0.01, session_id=session_id)
+            return reply
+
+        # 2. Check for PIN Change requests
+        change_match = re.search(
+            r"(?:change|update|set)\s+(?:the\s+)?(?:power\s+)?(?:password|pin|passcode|code)\s+(?:from\s+(\w+)\s+to\s+(\w+)|to\s+(\w+)(?:\s+(?:with|current\s+pin|old\s+pin|using)\s+(\w+))?)",
+            clean_prompt,
+            re.IGNORECASE
+        )
+        if change_match:
+            old_raw = change_match.group(1) or change_match.group(4)
+            new_raw = change_match.group(2) or change_match.group(3)
+            old_p = extract_pin_from_text(old_raw) if old_raw else None
+            new_p = extract_pin_from_text(new_raw) if new_raw else None
+            if old_p and new_p:
+                reply = change_power_pin(old_p, new_p)
+            elif new_p and not old_p:
+                reply = f"To update your security PIN to '{new_p}', please state your current PIN (e.g. 'change power pin from [current PIN] to {new_p}')."
+            else:
+                reply = "Usage: Say 'change power pin from [current PIN] to [new PIN]'."
+            storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
+            storage.add_message("assistant", reply, latency=0.01, session_id=session_id)
+            return reply
+
+        # 3. Check for System Power & State Commands
         p_lower = re.sub(r"[^\w\s]", "", clean_prompt.lower()).strip()
         p_lower = re.sub(r"^(?:please\s+|can\s+you\s+|would\s+you\s+|wednesday\s+)?", "", p_lower).strip()
 
-        if p_lower in [
-            "shutdown", "shut down", "turn off pc", "turn off the pc", "turn off computer",
-            "turn off the computer", "power off", "power off pc", "power off computer",
-            "shutdown pc", "shutdown computer", "shut down pc", "shut down computer",
-            "shut down the pc", "shut down the computer"
-        ]:
-            reply = shutdown_system(delay_seconds=5)
-            storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
-            storage.add_message("assistant", reply, latency=0.01, session_id=session_id)
-            return reply
-
-        elif p_lower in [
-            "restart", "reboot", "restart pc", "reboot pc", "restart computer", "reboot computer",
-            "restart the pc", "restart the computer", "reboot the pc", "reboot the computer"
-        ]:
-            reply = restart_system(delay_seconds=5)
-            storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
-            storage.add_message("assistant", reply, latency=0.01, session_id=session_id)
-            return reply
-
-        elif p_lower in [
-            "sleep", "go to sleep", "sleep pc", "put pc to sleep", "put computer to sleep",
-            "sleep mode", "standby", "suspend", "put the pc to sleep", "put the computer to sleep"
-        ]:
-            reply = sleep_system()
-            storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
-            storage.add_message("assistant", reply, latency=0.01, session_id=session_id)
-            return reply
-
-        elif p_lower in [
-            "hibernate", "hibernate pc", "hibernate computer", "put pc in hibernation",
-            "hibernate the pc", "hibernate the computer", "enter hibernation"
-        ]:
-            reply = hibernate_system()
-            storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
-            storage.add_message("assistant", reply, latency=0.01, session_id=session_id)
-            return reply
-
-        elif p_lower in [
-            "lock", "lock pc", "lock computer", "lock screen", "lock workstation",
-            "lock the pc", "lock the screen", "lock the computer", "lock the workstation"
-        ]:
+        power_action = None
+        if any(w in p_lower for w in ["shutdown", "shut down", "turn off pc", "turn off the pc", "turn off computer", "turn off the computer", "power off", "power off pc", "power off computer", "turn off laptop", "shut down laptop", "shutdown laptop"]):
+            power_action = "shutdown"
+        elif any(w in p_lower for w in ["restart", "reboot", "restart pc", "reboot pc", "restart computer", "reboot computer", "restart laptop", "reboot laptop"]):
+            power_action = "restart"
+        elif any(w in p_lower for w in ["sleep", "go to sleep", "sleep pc", "put pc to sleep", "put computer to sleep", "put laptop to sleep", "standby", "suspend", "sleep laptop"]):
+            power_action = "sleep"
+        elif any(w in p_lower for w in ["hibernate", "hibernate pc", "hibernate computer", "put pc in hibernation", "hibernate laptop"]):
+            power_action = "hibernate"
+        elif any(w in p_lower for w in ["lock", "lock pc", "lock computer", "lock screen", "lock workstation", "lock laptop"]):
             reply = lock_system()
             storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
             storage.add_message("assistant", reply, latency=0.01, session_id=session_id)
             return reply
-
-        elif p_lower in [
-            "cancel shutdown", "abort shutdown", "stop shutdown", "dont shutdown",
-            "cancel restart", "abort restart", "stop restart"
-        ]:
+        elif any(w in p_lower for w in ["cancel shutdown", "abort shutdown", "stop shutdown", "dont shutdown", "cancel restart", "abort restart"]):
             reply = cancel_shutdown()
+            clear_pending_power_action(session_id)
+            storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
+            storage.add_message("assistant", reply, latency=0.01, session_id=session_id)
+            return reply
+
+        if power_action:
+            # Check if user provided the PIN in the same command
+            if candidate_pin:
+                if verify_power_password(candidate_pin):
+                    reply = execute_raw_power_action(power_action)
+                else:
+                    reply = "Authentication failed: incorrect security PIN. Power command cancelled."
+            else:
+                # Set pending state and request PIN
+                set_pending_power_action(session_id, power_action)
+                action_text = "shut down" if power_action == "shutdown" else ("restart" if power_action == "restart" else ("put your laptop to sleep" if power_action == "sleep" else "hibernate"))
+                reply = f"Authentication required to {action_text} your laptop. Please provide the 4-digit security PIN."
             storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
             storage.add_message("assistant", reply, latency=0.01, session_id=session_id)
             return reply
@@ -752,7 +1165,7 @@ class Brain:
             if reply:
                 return reply
         else:
-            # 1. Primary: Groq (GPT-OSS-120B, Qwen, etc.)
+            # 1. Primary: Groq (Qwen, GPT-OSS, etc.)
             reply = self._query_groq(chosen_model, groq_messages, start_time, clean_prompt, source, session_id)
             if reply:
                 return reply
@@ -761,7 +1174,7 @@ class Brain:
             if reply:
                 return reply
 
-        fallback_msg = "Consider it done."
+        fallback_msg = "I'm currently unable to reach the AI models due to temporary API rate limits or network issues. Please check your API quota or try again in a moment."
         storage.add_message("user", clean_prompt, source=source, latency=0.0, session_id=session_id)
         storage.add_message("assistant", fallback_msg, session_id=session_id)
         return fallback_msg

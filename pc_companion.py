@@ -75,6 +75,15 @@ def get_status(x_pc_secret: Optional[str] = Header(None)):
         "ram_percent": mem.percent
     }
 
+@app.get("/screenshot")
+def get_screenshot(x_pc_secret: Optional[str] = Header(None)):
+    verify_secret(x_pc_secret)
+    from tools.system_tools import capture_desktop_screenshot
+    png_bytes, meta = capture_desktop_screenshot()
+    if not png_bytes:
+        raise HTTPException(status_code=500, detail=meta)
+    return Response(content=png_bytes, media_type="image/png", headers={"X-Screenshot-Meta": meta})
+
 @app.get("/files/list")
 def list_directory(path: str = Query("Desktop"), x_pc_secret: Optional[str] = Header(None)):
     verify_secret(x_pc_secret)
@@ -194,27 +203,34 @@ def download_file(path: str = Query(...), x_pc_secret: Optional[str] = Header(No
 
 class PowerPayload(BaseModel):
     action: str = "status"
+    pin: Optional[str] = None
 
 @app.post("/power")
 def control_power(payload: PowerPayload, x_pc_secret: Optional[str] = Header(None)):
     verify_secret(x_pc_secret)
     act = payload.action.lower().strip()
     
+    # Power actions requiring PIN authentication
+    if act in ("sleep", "hibernate", "restart", "shutdown", "poweroff"):
+        from core.security import verify_power_password
+        if not payload.pin or not verify_power_password(payload.pin):
+            return {"status": "unauthorized", "message": "Authentication required. Valid 4-digit security PIN is required for power control."}
+
     if act == "lock":
         subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=False)
         return {"status": "ok", "message": "Workstation locked successfully."}
     elif act == "sleep":
         subprocess.run(["powershell", "-Command", "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)"], check=False)
-        return {"status": "ok", "message": "PC entered sleep mode."}
+        return {"status": "ok", "message": "PIN verified. PC entered sleep mode."}
     elif act == "hibernate":
         subprocess.run(["shutdown", "/h"], check=False)
-        return {"status": "ok", "message": "PC entered hibernation."}
+        return {"status": "ok", "message": "PIN verified. PC entered hibernation."}
     elif act == "restart":
         subprocess.run(["shutdown", "/r", "/t", "5"], check=False)
-        return {"status": "ok", "message": "PC will restart in 5 seconds."}
+        return {"status": "ok", "message": "PIN verified. PC will restart in 5 seconds."}
     elif act in ("shutdown", "poweroff"):
         subprocess.run(["shutdown", "/s", "/t", "5"], check=False)
-        return {"status": "ok", "message": "PC will shut down in 5 seconds."}
+        return {"status": "ok", "message": "PIN verified. PC will shut down in 5 seconds."}
     elif act in ("cancel", "abort"):
         subprocess.run(["shutdown", "/a"], check=False)
         return {"status": "ok", "message": "Scheduled shutdown/restart canceled."}

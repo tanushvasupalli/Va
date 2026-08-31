@@ -19,3 +19,23 @@ def execute_mcp_tool(tool_name: str, arguments: Optional[Dict[str, Any]] = None)
     """Executes a discovered MCP tool with given arguments."""
     args = arguments or {}
     return mcp_client.call_tool(tool_name, args)
+
+def connect_mcp_server(server_url: str) -> str:
+    """Connects a new Model Context Protocol (MCP) server by URL and saves it."""
+    from core.config_manager import add_mcp_server
+    ok, msg = add_mcp_server(server_url)
+    return msg
+
+def disconnect_mcp_server(server_url_or_index: str) -> str:
+    """Disconnects and removes an MCP server from active configuration."""
+    from core.config_manager import remove_mcp_server
+    ok, msg = remove_mcp_server(server_url_or_index)
+    return msg
+
+def call_mcp_tool_direct(tool_name: str, json_args_str: str = "{}") -> str:
+    """Directly tests and executes an MCP tool with a raw JSON argument string."""
+    try:
+        args = json.loads(json_args_str) if json_args_str.strip() else {}
+        return execute_mcp_tool(tool_name, args)
+    except Exception as e:
+        return f"Invalid JSON arguments: {e}"

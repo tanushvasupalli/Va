@@ -71,6 +71,7 @@ class SupabaseStorageManager:
                             updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
                         );
                         INSERT INTO sessions (id, title) VALUES ('default', 'Main Conversation') ON CONFLICT (id) DO NOTHING;
+                        INSERT INTO sessions (id, title) VALUES ('telegram', 'Telegram Assistant') ON CONFLICT (id) DO NOTHING;
                     """)
             print("[Storage] Supabase PostgreSQL Cloud Database connected and ready!")
         except Exception as e:
@@ -163,6 +164,10 @@ class SupabaseStorageManager:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO sessions (id, title) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+                        (session_id, "Telegram Assistant" if session_id == "telegram" else session_id)
+                    )
                     cur.execute("""
                         INSERT INTO conversations (session_id, role, content, source, latency, created_at)
                         VALUES (%s, %s, %s, %s, %s, NOW())
@@ -217,6 +222,111 @@ class SupabaseStorageManager:
             print(f"[Supabase Error] get_session_messages: {e}")
             return []
 
+    def get_telegram_messages(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        source_filter: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Retrieves Telegram messages with optional full-text search and source filter."""
+        try:
+            query = """
+                SELECT id, session_id, role, content, source, latency,
+                       to_char(created_at, 'YYYY-MM-DD HH12:MI AM') as formatted_time,
+                       to_char(created_at, 'HH12:MI AM') as timestamp,
+                       created_at
+                FROM conversations
+                WHERE (session_id = 'telegram' OR source ILIKE '%%telegram%%')
+            """
+            params = []
+
+            if source_filter and source_filter.lower() != "all":
+                if source_filter == "voice":
+                    query += " AND (source ILIKE '%%voice%%')"
+                elif source_filter == "text":
+                    query += " AND (source NOT ILIKE '%%voice%%')"
+                elif source_filter in ("user", "assistant"):
+                    query += " AND role = %s"
+                    params.append(source_filter)
+
+            if search and search.strip():
+                query += " AND content ILIKE %s"
+                params.append(f"%{search.strip()}%")
+
+            query += " ORDER BY id DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(query, tuple(params))
+                    rows = cur.fetchall()
+                    # Return in chronological order for chat view
+                    return [serialize_row(dict(r)) for r in reversed(rows)]
+        except Exception as e:
+            print(f"[Supabase Error] get_telegram_messages: {e}")
+            return []
+
+    def get_telegram_stats(self) -> Dict[str, Any]:
+        """Calculates aggregate metrics for Telegram interactions."""
+        default_stats = {
+            "total_messages": 0,
+            "user_messages": 0,
+            "assistant_messages": 0,
+            "voice_notes_count": 0,
+            "text_messages_count": 0,
+            "avg_latency": 0.0,
+            "last_active": "Never"
+        }
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT 
+                            COUNT(*) as total_messages,
+                            COUNT(*) FILTER (WHERE role = 'user') as user_messages,
+                            COUNT(*) FILTER (WHERE role = 'assistant') as assistant_messages,
+                            COUNT(*) FILTER (WHERE source ILIKE '%%voice%%') as voice_notes_count,
+                            COUNT(*) FILTER (WHERE source NOT ILIKE '%%voice%%') as text_messages_count,
+                            COALESCE(AVG(latency) FILTER (WHERE role = 'assistant' AND latency > 0), 0) as avg_latency,
+                            MAX(created_at) as last_active_ts
+                        FROM conversations
+                        WHERE (session_id = 'telegram' OR source ILIKE '%%telegram%%')
+                    """)
+                    row = cur.fetchone()
+                    if row:
+                        stats = dict(row)
+                        last_ts = stats.get("last_active_ts")
+                        stats["last_active"] = last_ts.strftime("%b %d, %I:%M %p") if last_ts else "No interactions yet"
+                        stats["avg_latency"] = round(float(stats.get("avg_latency", 0)), 2)
+                        return serialize_row(stats)
+            return default_stats
+        except Exception as e:
+            print(f"[Supabase Error] get_telegram_stats: {e}")
+            return default_stats
+
+    def delete_message_by_id(self, message_id: int) -> bool:
+        """Deletes a specific message by its ID."""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM conversations WHERE id = %s", (message_id,))
+            return True
+        except Exception as e:
+            print(f"[Supabase Error] delete_message_by_id: {e}")
+            return False
+
+    def clear_telegram_history(self) -> bool:
+        """Deletes all conversation records associated with Telegram."""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM conversations WHERE session_id = 'telegram' OR source ILIKE '%%telegram%%'")
+            return True
+        except Exception as e:
+            print(f"[Supabase Error] clear_telegram_history: {e}")
+            return False
+
     def clear_session_messages(self, session_id: str):
         """Clears messages for a session."""
         try:
@@ -234,6 +344,7 @@ class SupabaseStorageManager:
                     cur.execute("DELETE FROM conversations")
                     cur.execute("DELETE FROM sessions")
                     cur.execute("INSERT INTO sessions (id, title) VALUES ('default', 'Main Conversation')")
+                    cur.execute("INSERT INTO sessions (id, title) VALUES ('telegram', 'Telegram Assistant')")
         except Exception as e:
             print(f"[Supabase Error] clear_all_data: {e}")
 
@@ -289,16 +400,34 @@ class SupabaseStorageManager:
         lines = [f"- [{m['topic'].capitalize()}]: {m['fact']}" for m in memories]
         return "\n[Persistent Memories / Known User Facts]:\n" + "\n".join(lines) + "\n"
 
-    def forget_fact(self, topic: str) -> int:
-        """Removes memories matching a topic from Supabase."""
+    def get_preference(self, key: str, default: str = "") -> str:
+        """Retrieves a stored system configuration preference from Supabase."""
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("DELETE FROM memories WHERE topic ILIKE %s", (f"%{topic.strip().lower()}%",))
-                    return cur.rowcount
+                    cur.execute("SELECT value FROM preferences WHERE key = %s", (key.strip(),))
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        return str(row[0])
+            return default
         except Exception as e:
-            print(f"[Supabase Error] forget_fact: {e}")
-            return 0
+            print(f"[Supabase Error] get_preference: {e}")
+            return default
+
+    def set_preference(self, key: str, value: str) -> bool:
+        """Saves or updates a system preference in Supabase."""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO preferences (key, value, updated_at)
+                        VALUES (%s, %s, NOW())
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                    """, (key.strip(), str(value).strip()))
+            return True
+        except Exception as e:
+            print(f"[Supabase Error] set_preference: {e}")
+            return False
 
 # Global singleton storage instance connected to Supabase
 storage = SupabaseStorageManager()
