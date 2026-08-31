@@ -21,12 +21,9 @@ python -m venv --system-site-packages venv
 source venv/bin/activate
 pip install --upgrade pip
 
-# 4. Install requirements with robust fallback
-echo "[4/6] Installing Python libraries (Optimized for Android)..."
-pip install -r requirements.txt || {
-    echo "[!] Some desktop-only packages were skipped. Installing core runtime packages..."
-    pip install edge-tts soundfile numpy groq google-genai python-dotenv requests fastapi uvicorn websockets duckduckgo_search beautifulsoup4 SpeechRecognition psutil python-telegram-bot aiohttp psycopg2-binary Pillow
-}
+# 4. Install requirements
+echo "[4/6] Installing Python libraries (Cross-Platform)..."
+pip install -r requirements.txt
 
 # 5. Setup Termux:Boot (Auto-start on Tablet Reboot)
 echo "[5/6] Configuring auto-start on boot (Termux:Boot)..."

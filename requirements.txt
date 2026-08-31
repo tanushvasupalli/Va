@@ -1,5 +1,9 @@
+# =========================================================================
+# WEDNESDAY AI - CROSS-PLATFORM REQUIREMENTS (Windows / Android / Linux)
+# =========================================================================
+
+# 1. Universal Core AI, Server, Database & Bot Packages
 edge-tts>=6.1.12
-sounddevice>=0.4.6
 soundfile>=0.12.1
 numpy>=1.26.0
 groq>=0.11.0
@@ -17,8 +21,12 @@ python-telegram-bot>=20.8
 aiohttp>=3.9.0
 psycopg2-binary>=2.9.9
 Pillow>=10.0.0
-pyautogui>=0.9.54
-imageio>=2.37.0
-imageio-ffmpeg>=0.6.0
-pynput>=1.7.6
+
+# 2. Desktop Windows-Specific Drivers & UI Automation Packages
+sounddevice>=0.4.6; sys_platform == 'win32'
+pyautogui>=0.9.54; sys_platform == 'win32'
+imageio>=2.37.0; sys_platform == 'win32'
+imageio-ffmpeg>=0.6.0; sys_platform == 'win32'
+pynput>=1.7.6; sys_platform == 'win32'
+
 
