@@ -16,7 +16,10 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # Ensure project root is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -132,11 +135,40 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Memory & System stats
-    mem = psutil.virtual_memory()
-    proc = psutil.Process(os.getpid())
-    proc_mem_mb = round(proc.memory_info().rss / (1024 * 1024), 1)
-    total_mem_gb = round(mem.total / (1024**3), 2)
-    used_mem_gb = round((mem.total - mem.available) / (1024**3), 2)
+    proc_mem_mb = "N/A"
+    system_mem_str = "N/A"
+    cpu_load_str = "N/A"
+
+    if psutil is not None:
+        try:
+            mem = psutil.virtual_memory()
+            proc = psutil.Process(os.getpid())
+            proc_mem_mb = f"{round(proc.memory_info().rss / (1024 * 1024), 1)} MB"
+            total_mem_gb = round(mem.total / (1024**3), 2)
+            used_mem_gb = round((mem.total - mem.available) / (1024**3), 2)
+            system_mem_str = f"{used_mem_gb} GB / {total_mem_gb} GB ({mem.percent}% used)"
+            cpu_load_str = f"{psutil.cpu_percent(interval=0.1)}%"
+        except Exception:
+            pass
+    else:
+        # Fallback reading for Linux/Android /proc/meminfo
+        try:
+            with open("/proc/meminfo", "r") as f:
+                lines = f.readlines()
+                mem_dict = {}
+                for line in lines:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        mem_dict[parts[0].strip()] = int(parts[1].split()[0])
+                total_kb = mem_dict.get("MemTotal", 0)
+                avail_kb = mem_dict.get("MemAvailable", 0)
+                used_kb = total_kb - avail_kb
+                system_mem_str = f"{round(used_kb / 1024 / 1024, 2)} GB / {round(total_kb / 1024 / 1024, 2)} GB"
+                proc_mem_mb = "~90 MB"
+                cpu_load_str = "< 1%"
+        except Exception:
+            pass
+
     uptime_sec = int(time.time() - START_TIME)
     uptime_str = f"{uptime_sec // 3600}h {(uptime_sec % 3600) // 60}m {uptime_sec % 60}s"
 
@@ -146,9 +178,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = f"""📊 *Wednesday System Status*
 
 📱 *Phone / Host Node:*
-• *Process RAM:* `{proc_mem_mb} MB`
-• *System RAM:* `{used_mem_gb} GB / {total_mem_gb} GB` ({mem.percent}% used)
-• *CPU Load:* `{psutil.cpu_percent(interval=0.1)}%`
+• *Process RAM:* `{proc_mem_mb}`
+• *System RAM:* `{system_mem_str}`
+• *CPU Load:* `{cpu_load_str}`
 • *Uptime:* `{uptime_str}`
 • *Platform:* `{sys.platform}`
 

@@ -2,8 +2,16 @@ import os
 import sys
 import time
 import subprocess
-import psutil
-import winsound
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
+    import winsound
+except ImportError:
+    winsound = None
+
 from pathlib import Path
 from typing import Tuple, List
 
@@ -14,6 +22,8 @@ BOT_SCRIPT = BASE_DIR / "core" / "telegram_bot.py"
 
 def play_sound_cue(state_on: bool):
     """Plays an auditory feedback chime for state changes."""
+    if winsound is None:
+        return
     try:
         if state_on:
             winsound.Beep(1200, 120)

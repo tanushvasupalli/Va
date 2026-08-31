@@ -1,13 +1,19 @@
 import os
 import sys
 import gc
-import psutil
 from pathlib import Path
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 LOCK_FILE = Path(__file__).resolve().parent.parent / "data" / "wednesday.lock"
 
 def optimize_process():
     """Sets process priority to polite level to guarantee minimal battery and CPU usage across Windows/Linux/Android."""
+    if psutil is None:
+        return
     try:
         p = psutil.Process(os.getpid())
         if sys.platform == "win32":
@@ -27,12 +33,21 @@ def acquire_single_instance_lock() -> bool:
         if LOCK_FILE.exists():
             try:
                 old_pid = int(LOCK_FILE.read_text().strip())
-                if psutil.pid_exists(old_pid) and old_pid != os.getpid():
-                    # Check if process is indeed python
-                    proc = psutil.Process(old_pid)
-                    if "python" in proc.name().lower():
-                        print(f"[Optimizer] Another instance of Wednesday is already active (PID: {old_pid}). Exiting duplicate.")
-                        return False
+                if old_pid != os.getpid():
+                    if psutil is not None:
+                        if psutil.pid_exists(old_pid):
+                            proc = psutil.Process(old_pid)
+                            if "python" in proc.name().lower():
+                                print(f"[Optimizer] Another instance of Wednesday is already active (PID: {old_pid}). Exiting duplicate.")
+                                return False
+                    else:
+                        # Fallback for systems without psutil
+                        try:
+                            os.kill(old_pid, 0)
+                            print(f"[Optimizer] Another instance of Wednesday is active (PID: {old_pid}). Exiting duplicate.")
+                            return False
+                        except (OSError, ProcessLookupError):
+                            pass
             except Exception:
                 pass
         

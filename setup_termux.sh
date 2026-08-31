@@ -13,7 +13,7 @@ pkg update -y && pkg upgrade -y
 
 # 2. Install essential compilers, build tools, prebuilt binaries & utilities
 echo "[2/6] Installing Python, Git, FFmpeg, Clang, Net-Tools & Prebuilt Packages..."
-pkg install -y python python-pip python-numpy python-pillow postgresql git ffmpeg clang libffi openssl termux-api net-tools nmap
+pkg install -y python python-pip python-numpy python-pillow python-psutil postgresql git ffmpeg clang libffi openssl termux-api net-tools nmap
 
 # 3. Create Python Virtual Environment with system site packages
 echo "[3/6] Setting up optimized Python virtual environment..."
