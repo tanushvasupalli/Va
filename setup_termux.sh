@@ -13,16 +13,18 @@ pkg update -y && pkg upgrade -y
 
 # 2. Install essential compilers, build tools, prebuilt binaries & utilities
 echo "[2/6] Installing Python, Rust, Build Tools & Prebuilt Packages..."
-pkg install -y python python-pip python-numpy python-pillow python-psutil python-cffi python-cryptography rust binutils postgresql git ffmpeg clang libffi openssl termux-api net-tools nmap
+pkg install -y python python-pip python-numpy python-pillow python-psutil rust binutils postgresql git ffmpeg clang libffi openssl termux-api net-tools nmap
 
 # 3. Create Python Virtual Environment with system site packages
 echo "[3/6] Setting up optimized Python virtual environment..."
 python -m venv --system-site-packages venv
 source venv/bin/activate
 pip install --upgrade pip setuptools wheel
+pip install maturin 2>/dev/null || true
 
-# 4. Install requirements
+# 4. Install requirements with native Rust target
 echo "[4/6] Installing Python libraries (Cross-Platform)..."
+export CARGO_BUILD_TARGET="aarch64-linux-android"
 pip install -r requirements.txt
 
 # 5. Setup Termux:Boot (Auto-start on Tablet Reboot)
