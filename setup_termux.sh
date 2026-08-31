@@ -12,14 +12,14 @@ echo "[1/6] Updating Termux packages..."
 pkg update -y && pkg upgrade -y
 
 # 2. Install essential compilers, build tools, prebuilt binaries & utilities
-echo "[2/6] Installing Python, Git, FFmpeg, Clang, Net-Tools & Prebuilt Packages..."
-pkg install -y python python-pip python-numpy python-pillow python-psutil postgresql git ffmpeg clang libffi openssl termux-api net-tools nmap
+echo "[2/6] Installing Python, Rust, Build Tools & Prebuilt Packages..."
+pkg install -y python python-pip python-numpy python-pillow python-psutil python-cffi python-cryptography rust binutils postgresql git ffmpeg clang libffi openssl termux-api net-tools nmap
 
 # 3. Create Python Virtual Environment with system site packages
 echo "[3/6] Setting up optimized Python virtual environment..."
 python -m venv --system-site-packages venv
 source venv/bin/activate
-pip install --upgrade pip
+pip install --upgrade pip setuptools wheel
 
 # 4. Install requirements
 echo "[4/6] Installing Python libraries (Cross-Platform)..."
