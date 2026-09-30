@@ -1,4 +1,5 @@
 import io
+import math
 import queue
 import time
 import numpy as np
@@ -113,7 +114,8 @@ class AudioIO:
         """Calculates the Root Mean Square (energy/volume) of an audio chunk."""
         if len(audio_chunk) == 0:
             return 0.0
-        return float(np.sqrt(np.mean(audio_chunk ** 2)))
+        # Optimization: np.linalg.norm combined with math.sqrt is much faster than np.sqrt(np.mean(chunk ** 2))
+        return float(np.linalg.norm(audio_chunk)) / math.sqrt(audio_chunk.size)
 
     def export_wav_bytes(self, audio_frames: list[np.ndarray]) -> io.BytesIO:
         """Converts a list of recorded numpy chunks into a WAV in-memory byte stream."""
