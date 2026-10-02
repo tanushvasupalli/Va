@@ -149,7 +149,9 @@ def search_files(query: str = Query(...), path: str = Query("Desktop"), x_pc_sec
         for root, dirs, files in os.walk(base):
             # Limit search depth to avoid infinite scans
             rel = os.path.relpath(root, base)
+            # Prune directory tree search if depth limit is reached
             if rel.count(os.sep) > 3:
+                dirs[:] = []
                 continue
 
             for f in files:
