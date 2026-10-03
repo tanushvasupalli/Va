@@ -8,6 +8,8 @@ import numpy as np
 import soundfile as sf
 import config
 
+_dct_basis_cache = {}
+
 def _pure_numpy_dct_ii(x: np.ndarray, num_ceps: int = 13) -> np.ndarray:
     """
     Computes Type-II Discrete Cosine Transform (ortho-normalized) using pure numpy.
@@ -16,11 +18,15 @@ def _pure_numpy_dct_ii(x: np.ndarray, num_ceps: int = 13) -> np.ndarray:
     if x.ndim == 1:
         x = x[None, :]
     num_frames, num_filters = x.shape
-    k = np.arange(num_ceps)[:, None]          # shape: (num_ceps, 1)
-    n = np.arange(num_filters)[None, :]        # shape: (1, num_filters)
-    # Cosine basis matrix: shape (num_ceps, num_filters)
-    basis = np.cos(np.pi * k * (2 * n + 1) / (2.0 * num_filters))
     
+    cache_key = (num_ceps, num_filters)
+    if cache_key not in _dct_basis_cache:
+        k = np.arange(num_ceps)[:, None]          # shape: (num_ceps, 1)
+        n = np.arange(num_filters)[None, :]        # shape: (1, num_filters)
+        # Cosine basis matrix: shape (num_ceps, num_filters)
+        _dct_basis_cache[cache_key] = np.cos(np.pi * k * (2 * n + 1) / (2.0 * num_filters))
+
+    basis = _dct_basis_cache[cache_key]
     # Project: (num_frames, num_filters) @ (num_filters, num_ceps) -> (num_frames, num_ceps)
     transformed = np.dot(x, basis.T) * np.sqrt(2.0 / num_filters)
     transformed[:, 0] *= (1.0 / np.sqrt(2.0))
@@ -39,6 +45,7 @@ class SpeakerRecognizer:
         self.sample_rate = config.SAMPLE_RATE
         self.profiles: Dict[str, dict] = {}
         self.similarity_threshold = 0.72  # Cosine similarity threshold for verification
+        self._fbank_cache = {}
         self.load_profiles()
 
     def load_profiles(self):
@@ -168,25 +175,29 @@ class SpeakerRecognizer:
         pow_frames = ((1.0 / nfft) * ((mag_frames) ** 2))
 
         # Filterbanks
-        low_freq_mel = 0
-        high_freq_mel = (2595 * np.log10(1 + (self.sample_rate / 2) / 700))
-        mel_points = np.linspace(low_freq_mel, high_freq_mel, num_filters + 2)
-        hz_points = (700 * (10**(mel_points / 2595) - 1))
-        bin = np.floor((nfft + 1) * hz_points / self.sample_rate)
+        cache_key = (num_filters, self.sample_rate, nfft)
+        if cache_key not in self._fbank_cache:
+            low_freq_mel = 0
+            high_freq_mel = (2595 * np.log10(1 + (self.sample_rate / 2) / 700))
+            mel_points = np.linspace(low_freq_mel, high_freq_mel, num_filters + 2)
+            hz_points = (700 * (10**(mel_points / 2595) - 1))
+            bin = np.floor((nfft + 1) * hz_points / self.sample_rate)
 
-        fbank = np.zeros((num_filters, int(np.floor(nfft / 2 + 1))))
-        for m in range(1, num_filters + 1):
-            f_m_minus = int(bin[m - 1])
-            f_m = int(bin[m])
-            f_m_plus = int(bin[m + 1])
+            fbank = np.zeros((num_filters, int(np.floor(nfft / 2 + 1))))
+            for m in range(1, num_filters + 1):
+                f_m_minus = int(bin[m - 1])
+                f_m = int(bin[m])
+                f_m_plus = int(bin[m + 1])
 
-            for k in range(f_m_minus, f_m):
-                if f_m != f_m_minus:
-                    fbank[m - 1, k] = (k - bin[m - 1]) / (bin[m] - bin[m - 1])
-            for k in range(f_m, f_m_plus):
-                if f_m_plus != f_m:
-                    fbank[m - 1, k] = (bin[m + 1] - k) / (bin[m + 1] - bin[m])
+                for k in range(f_m_minus, f_m):
+                    if f_m != f_m_minus:
+                        fbank[m - 1, k] = (k - bin[m - 1]) / (bin[m] - bin[m - 1])
+                for k in range(f_m, f_m_plus):
+                    if f_m_plus != f_m:
+                        fbank[m - 1, k] = (bin[m + 1] - k) / (bin[m + 1] - bin[m])
+            self._fbank_cache[cache_key] = fbank
 
+        fbank = self._fbank_cache[cache_key]
         filter_banks = np.dot(pow_frames, fbank.T)
         filter_banks = np.where(filter_banks == 0, np.finfo(float).eps, filter_banks)
         filter_banks = 20 * np.log10(filter_banks)
