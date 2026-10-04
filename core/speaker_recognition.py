@@ -254,8 +254,21 @@ class SpeakerRecognizer:
         z_std = np.std(zcrs) if zcrs else 0.0
 
         # 3. Fundamental frequency (Pitch estimation via autocorrelation)
-        corr = np.correlate(signal[:min(len(signal), self.sample_rate)], signal[:min(len(signal), self.sample_rate)], mode='full')
-        corr = corr[len(corr)//2:]
+        # Optimized: FFT-based autocorrelation (O(N log N)) replaces np.correlate (O(N^2))
+        sig_pitch = signal[:min(len(signal), self.sample_rate)]
+        n_pitch = len(sig_pitch)
+        # Pad to next power of 2 for faster FFT performance
+        nfft_pitch = 2**int(np.ceil(np.log2(2*n_pitch - 1))) if n_pitch > 0 else 0
+
+        if nfft_pitch > 0:
+            f_pitch = np.fft.rfft(sig_pitch, n=nfft_pitch)
+            power_pitch = np.abs(f_pitch)**2
+            corr = np.fft.irfft(power_pitch)
+            # Truncate to the original signal length
+            corr = corr[:n_pitch]
+        else:
+            corr = np.array([])
+
         # Human pitch range ~ 70Hz to 350Hz -> lag between sr/350 and sr/70
         d_min = int(self.sample_rate / 350)
         d_max = int(self.sample_rate / 70)
