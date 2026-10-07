@@ -216,50 +216,59 @@ class SpeakerRecognizer:
         hop_len = int(0.010 * self.sample_rate)
         num_frames = max(1, (len(signal) - frame_len) // hop_len)
         
-        centroids = []
-        rolloffs = []
-        zcrs = []
-
-        for i in range(num_frames):
-            frame = signal[i * hop_len : i * hop_len + frame_len]
-            if len(frame) < frame_len:
-                break
+        if num_frames > 0:
+            # Vectorized Spectral features
+            frame_indices = np.arange(num_frames)[:, None] * hop_len + np.arange(frame_len)
+            frames = signal[frame_indices]
             
             # Zero crossing rate
-            zcr = np.mean(np.abs(np.diff(np.signbit(frame).astype(int))))
-            zcrs.append(zcr)
+            zcrs = np.mean(np.abs(np.diff(np.signbit(frames).astype(int), axis=1)), axis=1)
+            z_mean = np.mean(zcrs)
+            z_std = np.std(zcrs)
 
             # Spectrum
-            spectrum = np.abs(np.fft.rfft(frame * np.hamming(len(frame)), nfft))
+            windowed_frames = frames * np.hamming(frame_len)
+            spectra = np.abs(np.fft.rfft(windowed_frames, n=nfft, axis=1))
             freqs = np.fft.rfftfreq(nfft, 1.0 / self.sample_rate)
 
-            # Centroid
-            sum_spec = np.sum(spectrum)
-            if sum_spec > 1e-6:
-                centroid = np.sum(freqs * spectrum) / sum_spec
-                centroids.append(centroid)
+            sum_specs = np.sum(spectra, axis=1)
+            valid_mask = sum_specs > 1e-6
+
+            if np.any(valid_mask):
+                valid_spectra = spectra[valid_mask]
+                valid_sum_specs = sum_specs[valid_mask]
+
+                # Centroid
+                centroids = np.sum(freqs * valid_spectra, axis=1) / valid_sum_specs
+                c_mean = np.mean(centroids)
+                c_std = np.std(centroids)
 
                 # Rolloff (85% energy)
-                cum_energy = np.cumsum(spectrum)
-                threshold = 0.85 * cum_energy[-1]
-                idx = np.where(cum_energy >= threshold)[0]
-                rolloff = freqs[idx[0]] if len(idx) > 0 else 0
-                rolloffs.append(rolloff)
+                cum_energies = np.cumsum(valid_spectra, axis=1)
+                thresholds = 0.85 * cum_energies[:, -1:]
+                rolloff_indices = np.argmax(cum_energies >= thresholds, axis=1)
+                rolloffs = freqs[rolloff_indices]
 
-        c_mean = np.mean(centroids) if centroids else 0.0
-        c_std = np.std(centroids) if centroids else 0.0
-        r_mean = np.mean(rolloffs) if rolloffs else 0.0
-        r_std = np.std(rolloffs) if rolloffs else 0.0
-        z_mean = np.mean(zcrs) if zcrs else 0.0
-        z_std = np.std(zcrs) if zcrs else 0.0
+                r_mean = np.mean(rolloffs)
+                r_std = np.std(rolloffs)
+            else:
+                c_mean = c_std = r_mean = r_std = 0.0
+        else:
+            c_mean = c_std = r_mean = r_std = z_mean = z_std = 0.0
 
-        # 3. Fundamental frequency (Pitch estimation via autocorrelation)
-        corr = np.correlate(signal[:min(len(signal), self.sample_rate)], signal[:min(len(signal), self.sample_rate)], mode='full')
-        corr = corr[len(corr)//2:]
+        # 3. Fundamental frequency (Pitch estimation via autocorrelation using FFT)
+        segment = signal[:min(len(signal), self.sample_rate)]
         # Human pitch range ~ 70Hz to 350Hz -> lag between sr/350 and sr/70
         d_min = int(self.sample_rate / 350)
         d_max = int(self.sample_rate / 70)
-        if len(corr) > d_max:
+
+        if len(segment) > d_max:
+            n = len(segment)
+            n_fft = 2 ** int(np.ceil(np.log2(2 * n - 1)))
+            seg_fft = np.fft.rfft(segment, n=n_fft)
+            power_spectrum = seg_fft * np.conjugate(seg_fft)
+            corr = np.fft.irfft(power_spectrum, n=n_fft)[:n]
+
             peak = np.argmax(corr[d_min:d_max]) + d_min
             f0_estimate = self.sample_rate / peak if peak > 0 else 0.0
         else:
