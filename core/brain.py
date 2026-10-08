@@ -71,30 +71,47 @@ from tools.network_tools import (
 from tools.mcp_tools import list_connected_mcp_tools, execute_mcp_tool
 from core.mcp_client import mcp_client
 
+# Pre-compile regex patterns for performance
+_THINK_EXACT_RE = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
+_THINK_OPEN_RE = re.compile(r"<think>.*", flags=re.DOTALL)
+_THINK_TAG_RE = re.compile(r"</?think>", flags=re.IGNORECASE)
+_TOOLCALL_RE = re.compile(r"<toolcall>.*?</toolcall>", flags=re.DOTALL | re.IGNORECASE)
+_TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", flags=re.DOTALL | re.IGNORECASE)
+_ANY_TAG_RE = re.compile(r"</?(?:function|parameter|tool_call|toolcall)[^>]*>", flags=re.IGNORECASE)
+_ASSISTANT_RE = re.compile(r"^Assistant:\s*", flags=re.IGNORECASE)
+_MARKDOWN_RE = re.compile(r"[*_#`]")
+
+# Pre-compute translation table for performance
+_CLEAN_TRANS_TABLE = str.maketrans({
+    "—": " - ", "–": " - ",
+    "\u2011": "-", "\u2013": "-", "\u2014": " - ",
+    "\u202f": " ", "\u00a0": " ", "\u2009": " ", "\u200b": "",
+    "“": '"', "”": '"', "‘": "'", "’": "'"
+})
+
 def clean_llm_response(text: str) -> str:
     """Sanitizes LLM responses, strips thinking tokens, tool tags, and ensures clean speech in any language."""
     if not text:
         return ""
     
-    # Strip thinking tags even if unclosed/truncated
-    if "<think>" in text:
-        if "</think>" in text:
-            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-        else:
-            text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
+    # Fast path: Skip regex execution if tags or Assistant prefix are definitely absent
+    if '<' in text or 'assistant:' in text.lower():
+        # Strip thinking tags even if unclosed/truncated
+        if "<think>" in text:
+            if "</think>" in text:
+                text = _THINK_EXACT_RE.sub("", text)
+            else:
+                text = _THINK_OPEN_RE.sub("", text)
 
-    # Strip any stray XML / tool tags
-    text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"<toolcall>.*?</toolcall>", "", text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"</?(?:function|parameter|tool_call|toolcall)[^>]*>", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"^Assistant:\s*", "", text, flags=re.IGNORECASE)
+        # Strip any stray XML / tool tags
+        text = _THINK_TAG_RE.sub("", text)
+        text = _TOOLCALL_RE.sub("", text)
+        text = _TOOL_CALL_RE.sub("", text)
+        text = _ANY_TAG_RE.sub("", text)
+        text = _ASSISTANT_RE.sub("", text)
     
-    text = text.replace("—", " - ").replace("–", " - ")
-    text = text.replace("\u2011", "-").replace("\u2013", "-").replace("\u2014", " - ")
-    text = text.replace("\u202f", " ").replace("\u00a0", " ").replace("\u2009", " ").replace("\u200b", "")
-    text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
-    text = re.sub(r"[*_#`]", "", text)
+    text = text.translate(_CLEAN_TRANS_TABLE)
+    text = _MARKDOWN_RE.sub("", text)
     return text.strip()
 
 def execute_tool(name: str, args: dict) -> str:

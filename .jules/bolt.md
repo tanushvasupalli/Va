@@ -1,0 +1,3 @@
+## 2024-10-08 - String Translate Performance vs Re.sub
+**Learning:** Chained string `.replace()` passes over long strings (like those returned by LLMs) are slow. Using `str.maketrans` in combination with `.translate()` reduces multiple python string passes into a single C-loop mapping. Additionally, adding a fast-path condition (like checking if relevant characters or prefixes exist) using `.lower()` or `in` significantly decreases execution time when regex evaluation is not necessary.
+**Action:** Next time when chained string `.replace()` methods or multiple regex evaluations on unmodified strings are found, compile regex patterns at module level, pre-compute `str.maketrans` table, and use fast string search before falling back to regex.
