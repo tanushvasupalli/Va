@@ -1,0 +1,3 @@
+## 2024-05-24 - PostgreSQL Connection Pooling in Context Managers
+**Learning:** When retrofitting connection pooling (like `psycopg2.pool.ThreadedConnectionPool`) into an existing class that used to return raw connections, changing the method to a `@contextmanager` is the correct pattern to avoid leaks. However, you must carefully ensure that *all* original call-sites were already using `with self._get_connection() as conn:` to handle transaction contexts. If they were, the migration is seamless. If not, the application will crash.
+**Action:** Always `grep` for the exact usage pattern of connection-fetching methods before changing their return type to a generator.
