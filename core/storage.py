@@ -4,7 +4,9 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
+from contextlib import contextmanager
 import config
 
 SUPABASE_DATABASE_URI = os.getenv(
@@ -30,18 +32,40 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
-        self._ensure_tables()
+        self.pool = None
+        try:
+            # Create a threaded connection pool to prevent latency overhead from
+            # constant TCP/TLS handshakes and to efficiently manage connections.
+            self.pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=1,
+                maxconn=10,
+                dsn=self.db_uri,
+                connect_timeout=10
+            )
+            self._ensure_tables()
+        except psycopg2.OperationalError as e:
+            # Handle invalid/missing SUPABASE_DATABASE_URL gracefully during test collection
+            print(f"[Storage Notice] DB init error (OperationalError): {e}")
+        except Exception as e:
+            print(f"[Storage Notice] DB init error: {e}")
 
-    def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
-        conn = psycopg2.connect(self.db_uri, connect_timeout=10)
-        conn.autocommit = True
-        return conn
+    @contextmanager
+    def get_db_connection(self):
+        """Yields a reliable connection from the pool to Supabase PostgreSQL."""
+        if not self.pool:
+            raise psycopg2.OperationalError("Connection pool not initialized")
+
+        conn = self.pool.getconn()
+        try:
+            conn.autocommit = True
+            yield conn
+        finally:
+            self.pool.putconn(conn)
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS sessions (
@@ -85,7 +109,7 @@ class SupabaseStorageManager:
         """Creates a new conversation session and returns its ID."""
         session_id = str(uuid.uuid4())[:8]
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "INSERT INTO sessions (id, title, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
@@ -99,7 +123,7 @@ class SupabaseStorageManager:
     def get_all_sessions(self) -> List[Dict[str, Any]]:
         """Returns all sessions ordered by latest update with JSON-safe timestamps."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("""
                         SELECT s.id, s.title, s.created_at, s.updated_at,
@@ -118,7 +142,7 @@ class SupabaseStorageManager:
     def delete_session(self, session_id: str) -> bool:
         """Deletes a session and its associated messages."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM conversations WHERE session_id = %s", (session_id,))
                     cur.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
@@ -130,7 +154,7 @@ class SupabaseStorageManager:
     def rename_session(self, session_id: str, new_title: str):
         """Renames a session title."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("UPDATE sessions SET title = %s, updated_at = NOW() WHERE id = %s", (new_title.strip(), session_id))
         except Exception as e:
@@ -139,7 +163,7 @@ class SupabaseStorageManager:
     def update_session_timestamp(self, session_id: str, auto_title_prompt: Optional[str] = None):
         """Refreshes updated_at timestamp and auto-names session from first message."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     if auto_title_prompt:
                         cur.execute("SELECT title FROM sessions WHERE id = %s", (session_id,))
@@ -162,7 +186,7 @@ class SupabaseStorageManager:
             return -1
 
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "INSERT INTO sessions (id, title) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
@@ -187,7 +211,7 @@ class SupabaseStorageManager:
     def get_context_window(self, limit: int = 10, session_id: str = "default") -> List[Dict[str, Any]]:
         """Retrieves latest N messages for LLM context window in chronological order."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("""
                         SELECT role, content, source, latency, created_at
@@ -205,7 +229,7 @@ class SupabaseStorageManager:
     def get_session_messages(self, session_id: str, limit: int = 80) -> List[Dict[str, Any]]:
         """Returns message history for a specific conversation session with clean string timestamps."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("""
                         SELECT id, session_id, role, content, source, latency,
@@ -257,7 +281,7 @@ class SupabaseStorageManager:
             query += " ORDER BY id DESC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
 
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute(query, tuple(params))
                     rows = cur.fetchall()
@@ -279,7 +303,7 @@ class SupabaseStorageManager:
             "last_active": "Never"
         }
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("""
                         SELECT 
@@ -308,7 +332,7 @@ class SupabaseStorageManager:
     def delete_message_by_id(self, message_id: int) -> bool:
         """Deletes a specific message by its ID."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM conversations WHERE id = %s", (message_id,))
             return True
@@ -319,7 +343,7 @@ class SupabaseStorageManager:
     def clear_telegram_history(self) -> bool:
         """Deletes all conversation records associated with Telegram."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM conversations WHERE session_id = 'telegram' OR source ILIKE '%%telegram%%'")
             return True
@@ -330,7 +354,7 @@ class SupabaseStorageManager:
     def clear_session_messages(self, session_id: str):
         """Clears messages for a session."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM conversations WHERE session_id = %s", (session_id,))
         except Exception as e:
@@ -339,7 +363,7 @@ class SupabaseStorageManager:
     def clear_all_data(self):
         """Wipes all conversations and resets sessions."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM conversations")
                     cur.execute("DELETE FROM sessions")
@@ -358,7 +382,7 @@ class SupabaseStorageManager:
             return False
 
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "INSERT INTO memories (topic, fact, created_at) VALUES (%s, %s, NOW())",
@@ -372,7 +396,7 @@ class SupabaseStorageManager:
     def get_all_memories(self) -> List[Dict[str, Any]]:
         """Returns all persistent memories from Supabase with JSON-safe timestamps."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("SELECT id, topic, fact, created_at FROM memories ORDER BY id DESC")
                     rows = cur.fetchall()
@@ -384,7 +408,7 @@ class SupabaseStorageManager:
     def delete_memory_by_id(self, memory_id: int) -> bool:
         """Deletes a memory entry by ID from Supabase."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
             return True
@@ -403,7 +427,7 @@ class SupabaseStorageManager:
     def get_preference(self, key: str, default: str = "") -> str:
         """Retrieves a stored system configuration preference from Supabase."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT value FROM preferences WHERE key = %s", (key.strip(),))
                     row = cur.fetchone()
@@ -417,7 +441,7 @@ class SupabaseStorageManager:
     def set_preference(self, key: str, value: str) -> bool:
         """Saves or updates a system preference in Supabase."""
         try:
-            with self._get_connection() as conn:
+            with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
                         INSERT INTO preferences (key, value, updated_at)
