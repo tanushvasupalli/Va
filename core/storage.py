@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
+from contextlib import contextmanager
 import config
 
 SUPABASE_DATABASE_URI = os.getenv(
@@ -30,13 +32,33 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self.pool = None
+        try:
+            # Initialize pool with min=1, max=10 to reuse connections and avoid TCP/TLS overhead
+            self.pool = ThreadedConnectionPool(1, 10, self.db_uri, connect_timeout=10)
+        except Exception as e:
+            print(f"[Storage Notice] Could not initialize connection pool: {e}")
+
         self._ensure_tables()
 
+    @contextmanager
     def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
-        conn = psycopg2.connect(self.db_uri, connect_timeout=10)
+        """Yields a connection from the pool, falling back to direct connection if pool failed."""
+        if not self.pool:
+            conn = psycopg2.connect(self.db_uri, connect_timeout=10)
+            conn.autocommit = True
+            try:
+                yield conn
+            finally:
+                conn.close()
+            return
+
+        conn = self.pool.getconn()
         conn.autocommit = True
-        return conn
+        try:
+            yield conn
+        finally:
+            self.pool.putconn(conn)
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""
