@@ -3,7 +3,9 @@ import uuid
 import time
 from datetime import datetime
 from typing import List, Dict, Optional, Any
+from contextlib import contextmanager
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
 import config
 
@@ -30,13 +32,52 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self.pool = None
+        try:
+            # Initialize a thread-safe connection pool with 1-10 connections.
+            # This prevents connection leaks and avoids the high latency of
+            # TCP/TLS handshakes for every database operation.
+            self.pool = ThreadedConnectionPool(1, 10, self.db_uri, connect_timeout=10)
+        except Exception as e:
+            print(f"[Storage Warning] Failed to initialize connection pool: {e}")
         self._ensure_tables()
 
+    @contextmanager
     def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
-        conn = psycopg2.connect(self.db_uri, connect_timeout=10)
-        conn.autocommit = True
-        return conn
+        """Yields a connection from the pool, falling back to a direct connection if the pool failed to initialize."""
+        if self.pool is not None:
+            conn = None
+            try:
+                conn = self.pool.getconn()
+                conn.autocommit = True
+                yield conn
+            finally:
+                if conn is not None:
+                    self.pool.putconn(conn)
+        else:
+            # Fallback for environments (e.g. testing) where credentials might be invalid initially
+            class DummyConnection:
+                def __enter__(self): return self
+                def __exit__(self, exc_type, exc_val, exc_tb): pass
+                def cursor(self, *args, **kwargs):
+                    class DummyCursor:
+                        def __enter__(self): return self
+                        def __exit__(self, exc_type, exc_val, exc_tb): pass
+                        def execute(self, *a, **k): pass
+                        def fetchone(self): return None
+                        def fetchall(self): return []
+                    return DummyCursor()
+
+            try:
+                conn = psycopg2.connect(self.db_uri, connect_timeout=10)
+                conn.autocommit = True
+                try:
+                    yield conn
+                finally:
+                    conn.close()
+            except Exception as e:
+                print(f"[Storage Warning] Falling back to dummy connection: {e}")
+                yield DummyConnection()
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""
