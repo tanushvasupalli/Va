@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 import config
 
@@ -22,6 +23,55 @@ def serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
             clean[k] = v
     return clean
 
+class _PooledConnectionWrapper:
+    """Safely proxies a psycopg2 connection to ensure it is returned to the pool exactly once."""
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+        self._closed = False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        if name in ('_conn', '_pool', '_closed'):
+            super().__setattr__(name, value)
+        else:
+            setattr(self._conn, name, value)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+
+        # If connection is dead, we should close it so the pool drops it, instead of putting it back
+        # But psycopg2 pool's putconn has `close=True` which does this safely
+        is_dead = False
+        try:
+            if self._conn.closed != 0:
+                is_dead = True
+        except Exception:
+            is_dead = True
+
+        if self._pool:
+            self._pool.putconn(self._conn, close=is_dead)
+        else:
+            if not is_dead:
+                self._conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        try:
+            if not self._closed:
+                self.close()
+        except Exception:
+            pass
+
 class SupabaseStorageManager:
     """
     Cloud Storage Manager connected directly to Supabase Cloud PostgreSQL Database.
@@ -30,13 +80,42 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self.pool = None
+        try:
+            # Prevent TCP/TLS handshake latency on every request
+            self.pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=1,
+                maxconn=10,
+                dsn=self.db_uri,
+                connect_timeout=10
+            )
+        except Exception as e:
+            print(f"[Storage] Connection pool failed to initialize, will use fallback. Error: {e}")
         self._ensure_tables()
 
     def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
-        conn = psycopg2.connect(self.db_uri, connect_timeout=10)
-        conn.autocommit = True
-        return conn
+        """Returns a connection context manager wrapper from the pool to prevent latency overhead, or falls back to direct connect."""
+        if not self.pool:
+            # Fallback for tests or missing environment context
+            conn = psycopg2.connect(self.db_uri, connect_timeout=10)
+            conn.autocommit = True
+            return _PooledConnectionWrapper(conn, None)
+        else:
+            conn = self.pool.getconn()
+
+            # Simple liveness check before yielding
+            try:
+                # Set autocommit to True first so we don't hold an active transaction after SELECT 1
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+            except Exception:
+                # Connection is dead, drop it and get a fresh one
+                self.pool.putconn(conn, close=True)
+                conn = self.pool.getconn()
+                conn.autocommit = True
+
+            return _PooledConnectionWrapper(conn, self.pool)
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""

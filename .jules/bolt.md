@@ -1,0 +1,3 @@
+## 2024-06-25 - Supabase Latency Overhead
+**Learning:** Initializing a new `psycopg2.connect` on every database call adds significant TCP/TLS handshake latency and risks memory/connection leaks in cloud PostgreSQL setups like Supabase.
+**Action:** Always use a connection pool (e.g. `psycopg2.pool.ThreadedConnectionPool`) and yield connections via a context manager to maintain performant, persistent connections across transactions. Always include fallback logic to allow testing without valid credentials.
