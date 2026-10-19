@@ -5,7 +5,35 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
 import config
+
+class PooledConnectionProxy:
+    """Proxy class to handle connection context management safely."""
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+        self._closed = False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        if not self._closed:
+            self._pool.putconn(self._conn)
+            self._closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type is not None:
+                self._conn.rollback()
+        except Exception:
+            pass
+        finally:
+            self.close()
 
 SUPABASE_DATABASE_URI = os.getenv(
     "SUPABASE_DATABASE_URL",
@@ -30,10 +58,23 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self.pool = None
+        try:
+            self.pool = ThreadedConnectionPool(1, 10, self.db_uri, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            print(f"[Storage Warning] Could not initialize connection pool: {e}")
         self._ensure_tables()
 
     def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
+        """Gets a connection from the pool, or creates a new one if pool is unavailable."""
+        if self.pool:
+            try:
+                conn = self.pool.getconn()
+                conn.autocommit = True
+                return PooledConnectionProxy(self.pool, conn)
+            except Exception as e:
+                print(f"[Storage Warning] Pool getconn error: {e}, falling back to direct connection")
+
         conn = psycopg2.connect(self.db_uri, connect_timeout=10)
         conn.autocommit = True
         return conn
