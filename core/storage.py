@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
 import config
 
@@ -22,6 +23,29 @@ def serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
             clean[k] = v
     return clean
 
+
+class PooledConnectionProxy:
+    def __init__(self, pool):
+        self._pool = pool
+        self._conn = self._pool.getconn()
+        self._conn.autocommit = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
+        if self._conn:
+            self._pool.putconn(self._conn)
+            self._conn = None
+
+    def __getattr__(self, name):
+        if self._conn is None:
+            raise RuntimeError("Connection is closed.")
+        return getattr(self._conn, name)
+
 class SupabaseStorageManager:
     """
     Cloud Storage Manager connected directly to Supabase Cloud PostgreSQL Database.
@@ -30,13 +54,26 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self._pool = None
+        try:
+            self._pool = ThreadedConnectionPool(1, 20, self.db_uri, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            print(f"[Storage Warning] Could not initialize connection pool: {e}")
         self._ensure_tables()
 
     def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
-        conn = psycopg2.connect(self.db_uri, connect_timeout=10)
-        conn.autocommit = True
-        return conn
+        """Yields a connection proxy from the pool. Falls back to a direct connection proxy if pool initialization failed."""
+        class DummyPool:
+            def __init__(self, uri):
+                self.uri = uri
+            def getconn(self):
+                return psycopg2.connect(self.uri, connect_timeout=10)
+            def putconn(self, conn):
+                conn.close()
+
+        if not self._pool:
+            return PooledConnectionProxy(DummyPool(self.db_uri))
+        return PooledConnectionProxy(self._pool)
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""
