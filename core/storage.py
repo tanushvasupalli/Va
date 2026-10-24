@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
 import config
 
@@ -22,6 +23,27 @@ def serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
             clean[k] = v
     return clean
 
+class ConnectionProxy:
+    """Proxy wrapper to handle psycopg2 connection pooling safely with autocommit."""
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        """Returns the connection back to the pool."""
+        if self._conn:
+            self._pool.putconn(self._conn)
+            self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
 class SupabaseStorageManager:
     """
     Cloud Storage Manager connected directly to Supabase Cloud PostgreSQL Database.
@@ -30,13 +52,28 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self.pool = None
+        try:
+            self.pool = ThreadedConnectionPool(1, 5, dsn=self.db_uri, connect_timeout=10)
+        except Exception as e:
+            print(f"[Storage Notice] Connection pool initialization failed (may be due to missing/invalid env credentials during testing): {e}")
         self._ensure_tables()
 
     def _get_connection(self):
         """Creates a reliable connection to Supabase PostgreSQL."""
+        if self.pool:
+            try:
+                conn = self.pool.getconn()
+                conn.autocommit = True
+                return ConnectionProxy(self.pool, conn)
+            except Exception as e:
+                print(f"[Storage Notice] Could not get connection from pool: {e}. Falling back to normal connection.")
         conn = psycopg2.connect(self.db_uri, connect_timeout=10)
         conn.autocommit = True
-        return conn
+        # Wrap fallback connection in proxy with a dummy pool so close() just cleans up.
+        class DummyPool:
+            def putconn(self, c): c.close()
+        return ConnectionProxy(DummyPool(), conn)
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""

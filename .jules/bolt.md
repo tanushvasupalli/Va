@@ -1,0 +1,3 @@
+## 2024-10-24 - Supabase Connection Pooling & Proxy Pattern
+**Learning:** `psycopg2` context managers inherently manage transactions, conflicting with `autocommit=True` required by Supabase. Further, monkey-patching `psycopg2` C-extension connections is restricted. Adding a `ThreadedConnectionPool` directly risks breaking standard contexts.
+**Action:** When implementing connection pooling for `psycopg2`, use a wrapper `ConnectionProxy` class implementing `__getattr__`, `__enter__`, `__exit__`, and `close()`. Pass fallback non-pooled connections via a `DummyPool` wrapper to ensure unified downstream API behavior. Wrap pool instantiation in `try-except` to prevent sandbox failures on startup if environment secrets are absent.
