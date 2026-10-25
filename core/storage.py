@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
 import config
 
@@ -22,6 +23,74 @@ def serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
             clean[k] = v
     return clean
 
+class ConnectionProxy:
+    """Proxy wrapper to safely manage connections and avoid autocommit conflicts in context managers."""
+    def __init__(self, pool):
+        self.pool = pool
+        self.conn = None
+        self.conn = self._get_valid_connection()
+        self.conn.autocommit = True
+
+    def _get_valid_connection(self):
+        # basic pre-ping loop with a queue wait
+        max_retries = 10
+        from psycopg2 import pool
+
+        for _ in range(max_retries):
+            try:
+                conn = self.pool.getconn()
+                if conn.closed:
+                    # Discard closed connection and try again
+                    self.pool.putconn(conn, close=True)
+                else:
+                    return conn
+            except pool.PoolError:
+                # Pool exhausted, wait and retry
+                time.sleep(0.5)
+        raise pool.PoolError("Connection pool exhausted")
+
+    def close(self):
+        if self.conn:
+            # Check if connection is dead before putting it back
+            is_dead = self.conn.closed != 0
+            self.pool.putconn(self.conn, close=is_dead)
+            self.conn = None
+
+    def __del__(self):
+        self.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
+
+class FallbackConnectionProxy:
+    """Fallback proxy for testing environments without valid DB URLs."""
+    def __init__(self, db_uri):
+        self.conn = psycopg2.connect(db_uri, connect_timeout=10)
+        self.conn.autocommit = True
+
+    def close(self):
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+
+    def __del__(self):
+        self.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
+
 class SupabaseStorageManager:
     """
     Cloud Storage Manager connected directly to Supabase Cloud PostgreSQL Database.
@@ -30,13 +99,19 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        try:
+            self.pool = ThreadedConnectionPool(minconn=1, maxconn=10, dsn=self.db_uri, connect_timeout=10)
+        except Exception as e:
+            print(f"[Storage Notice] Supabase connection pool init failed: {e}")
+            self.pool = None
         self._ensure_tables()
 
     def _get_connection(self):
         """Creates a reliable connection to Supabase PostgreSQL."""
-        conn = psycopg2.connect(self.db_uri, connect_timeout=10)
-        conn.autocommit = True
-        return conn
+        if self.pool:
+            return ConnectionProxy(self.pool)
+        else:
+            return FallbackConnectionProxy(self.db_uri)
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""
