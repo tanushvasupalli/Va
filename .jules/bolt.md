@@ -1,0 +1,3 @@
+## 2024-05-25 - Connection Pooling Overhead Insight
+**Learning:** Initializing a direct `psycopg2.connect` call in Supabase/PostgreSQL is heavily impacted by SSL and TCP handshakes. Replacing it with `ThreadedConnectionPool` dramatically reduces latency (from ~1.7s to ~0.25s per query). However, properly using pooling requires proxying the connection when `autocommit=True` is needed, as `psycopg2`'s native transaction management conflicts with standard context managers.
+**Action:** When implementing connection pooling for `psycopg2` with auto-commit semantics, wrap the pooled connection in a proxy class that implements custom `__enter__` and `__exit__` to return the connection to the pool rather than delegating to the native driver's transaction manager.
