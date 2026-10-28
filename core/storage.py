@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool, PoolError
 import config
 
 SUPABASE_DATABASE_URI = os.getenv(
@@ -22,6 +23,41 @@ def serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
             clean[k] = v
     return clean
 
+class PooledConnectionProxy:
+    """Proxy for psycopg2 connections to handle context management safely with connection pooling."""
+    def __init__(self, pool):
+        self.pool = pool
+        self.conn = None
+        for _ in range(10):
+            try:
+                conn = self.pool.getconn()
+                if conn.closed != 0:
+                    self.pool.putconn(conn, close=True)
+                    continue
+                self.conn = conn
+                self.conn.autocommit = True
+                break
+            except PoolError:
+                import time
+                time.sleep(0.1)
+
+        if self.conn is None:
+            raise PoolError("Connection pool exhausted or connections dead")
+
+    def close(self):
+        if self.conn is not None:
+            self.pool.putconn(self.conn)
+            self.conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
+
 class SupabaseStorageManager:
     """
     Cloud Storage Manager connected directly to Supabase Cloud PostgreSQL Database.
@@ -30,13 +66,24 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self.pool = None
+        self._initialize_pool()
         self._ensure_tables()
 
+    def _initialize_pool(self):
+        try:
+            if self.pool is None:
+                self.pool = ThreadedConnectionPool(1, 10, self.db_uri, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            print(f"[Supabase Error] Pool init failed: {e}")
+
     def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
-        conn = psycopg2.connect(self.db_uri, connect_timeout=10)
-        conn.autocommit = True
-        return conn
+        """Yields a reliable pooled connection with pre-ping."""
+        if not self.pool:
+            self._initialize_pool()
+            if not self.pool:
+                raise psycopg2.OperationalError("Connection pool not initialized")
+        return PooledConnectionProxy(self.pool)
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""
