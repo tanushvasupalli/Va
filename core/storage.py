@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool, PoolError
 from psycopg2.extras import RealDictCursor
 import config
 
@@ -22,6 +23,64 @@ def serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
             clean[k] = v
     return clean
 
+class PooledConnectionProxy:
+    """
+    Proxy class to manage connections from ThreadedConnectionPool.
+    Handles pre-pinging, safe return to pool, and bypasses native transaction conflicts when autocommit=True.
+    """
+    def __init__(self, pool):
+        self.pool = pool
+        self.conn = None
+        self._get_valid_connection()
+
+    def _get_valid_connection(self):
+        retries = 3
+        while retries > 0:
+            try:
+                self.conn = self.pool.getconn()
+                # Pre-ping: check if connection is alive
+                if self.conn.closed != 0:
+                    self.pool.putconn(self.conn, close=True)
+                    self.conn = None
+                    retries -= 1
+                    time.sleep(0.5)
+                    continue
+                self.conn.autocommit = True
+                return
+            except PoolError:
+                retries -= 1
+                time.sleep(0.5)
+        # Fallback if pool exhausted/broken
+        raise Exception("Failed to get valid connection from pool")
+
+    def close(self):
+        if self.conn:
+            try:
+                self.pool.putconn(self.conn)
+            except Exception:
+                pass
+            finally:
+                self.conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name):
+        if self.conn is None:
+            raise AttributeError(f"Connection is closed. Cannot access {name}")
+        return getattr(self.conn, name)
+
+    def __setattr__(self, name, value):
+        if name in ('pool', 'conn'):
+            super().__setattr__(name, value)
+        else:
+            if getattr(self, 'conn', None) is None:
+                raise AttributeError("Connection is closed.")
+            setattr(self.conn, name, value)
+
 class SupabaseStorageManager:
     """
     Cloud Storage Manager connected directly to Supabase Cloud PostgreSQL Database.
@@ -30,10 +89,20 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self.pool = None
+        try:
+            # Initialize connection pool for performance optimization
+            self.pool = ThreadedConnectionPool(1, 10, self.db_uri)
+        except psycopg2.OperationalError as e:
+            print(f"[Storage] Connection pool initialization failed (fallback to regular connection): {e}")
         self._ensure_tables()
 
     def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
+        """Creates a reliable connection to Supabase PostgreSQL, utilizing a connection pool if available."""
+        if self.pool:
+            return PooledConnectionProxy(self.pool)
+
+        # Fallback to creating a new connection each time (tests or pool failure)
         conn = psycopg2.connect(self.db_uri, connect_timeout=10)
         conn.autocommit = True
         return conn

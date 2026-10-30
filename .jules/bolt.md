@@ -1,0 +1,3 @@
+## 2024-10-30 - psycopg2 autocommit conflicts with context manager connection pools
+**Learning:** Native context managers for psycopg2 connections attempt to manage transactions automatically. When `autocommit=True` is enabled, this causes conflicts when connection pooling is implemented by simply returning the connection object.
+**Action:** When building connection pools with psycopg2 that require `autocommit=True`, use a proxy wrapper class to handle context management safely. The proxy must initialize the connection upon instantiation, bypass native transaction management, and implement a `close()` method that explicitly returns the connection to the pool (`putconn`) and calls this in `__exit__`.
