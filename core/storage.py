@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool, PoolError
 import config
 
 SUPABASE_DATABASE_URI = os.getenv(
@@ -22,6 +23,43 @@ def serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
             clean[k] = v
     return clean
 
+
+class PooledConnectionProxy:
+    def __init__(self, pool):
+        self.pool = pool
+        self.conn = None
+        retries = 3
+        for i in range(retries):
+            try:
+                conn = self.pool.getconn()
+                if conn.closed != 0:
+                    self.pool.putconn(conn, close=True)
+                    continue
+                self.conn = conn
+                self.conn.autocommit = True
+                return
+            except PoolError:
+                if i < retries - 1:
+                    time.sleep(0.1)
+                else:
+                    raise
+        self.conn = self.pool.getconn()
+        self.conn.autocommit = True
+
+    def close(self):
+        if self.conn is not None:
+            self.pool.putconn(self.conn)
+            self.conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
+
 class SupabaseStorageManager:
     """
     Cloud Storage Manager connected directly to Supabase Cloud PostgreSQL Database.
@@ -30,10 +68,17 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self.pool = None
+        try:
+            self.pool = ThreadedConnectionPool(minconn=1, maxconn=10, dsn=self.db_uri, connect_timeout=10)
+        except Exception as e:
+            print(f"[Storage Notice] Could not initialize connection pool: {e}")
         self._ensure_tables()
 
     def _get_connection(self):
         """Creates a reliable connection to Supabase PostgreSQL."""
+        if self.pool:
+            return PooledConnectionProxy(self.pool)
         conn = psycopg2.connect(self.db_uri, connect_timeout=10)
         conn.autocommit = True
         return conn
