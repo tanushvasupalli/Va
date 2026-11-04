@@ -3,7 +3,9 @@ import uuid
 import time
 from datetime import datetime
 from typing import List, Dict, Optional, Any
+import threading
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool, PoolError
 from psycopg2.extras import RealDictCursor
 import config
 
@@ -11,6 +13,59 @@ SUPABASE_DATABASE_URI = os.getenv(
     "SUPABASE_DATABASE_URL",
     "postgresql://postgres.bpbwqvkvzjtfvxezxhja:Tanurithu.1209@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
 )
+
+class ConnectionProxy:
+    """
+    Safely wraps a psycopg2 pool connection, adding liveness checks, automatic retries,
+    and returning the connection to the pool when garbage collected or exiting context.
+    """
+    def __init__(self, pool, max_retries=10, delay=0.5):
+        self.pool = pool
+        self.conn = None
+        self._closed = False
+        for _ in range(max_retries):
+            try:
+                conn = self.pool.getconn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT 1")
+                except Exception:
+                    self.pool.putconn(conn, close=True)
+                    continue
+
+                self.conn = conn
+                self.conn.autocommit = True
+                break
+            except PoolError:
+                time.sleep(delay)
+
+        if not self.conn:
+            raise PoolError("Connection pool exhausted after retries.")
+
+    def cursor(self, *args, **kwargs):
+        """Returns a proxy cursor that keeps the connection proxy alive."""
+        real_cursor = self.conn.cursor(*args, **kwargs)
+        # Keep a reference to the connection proxy on the cursor to prevent GC
+        real_cursor._connection_proxy = self
+        return real_cursor
+
+    def close(self):
+        if not self._closed and self.conn is not None:
+            self._closed = True
+            self.pool.putconn(self.conn)
+            self.conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
 
 def serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """Converts datetime objects and non-serializable fields to clean JSON strings."""
@@ -30,13 +85,17 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self._pool = None
+        self._pool_lock = threading.Lock()
         self._ensure_tables()
 
     def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
-        conn = psycopg2.connect(self.db_uri, connect_timeout=10)
-        conn.autocommit = True
-        return conn
+        """Gets a connection from the connection pool, initializing it if necessary."""
+        if self._pool is None:
+            with self._pool_lock:
+                if self._pool is None:
+                    self._pool = ThreadedConnectionPool(1, 20, self.db_uri, connect_timeout=10)
+        return ConnectionProxy(self._pool)
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""
