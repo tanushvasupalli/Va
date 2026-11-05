@@ -1,0 +1,7 @@
+## 2024-05-24 - Supabase PostgreSQL Connection Latency
+**Learning:** Establishing a new PostgreSQL connection (especially to cloud databases like Supabase) for every operation adds significant latency due to TCP and TLS handshakes. Initializing a connection pool globally at the module level can also cause load-time hangs if network I/O is slow.
+**Action:** Use a lazily initialized `psycopg2.pool.ThreadedConnectionPool` as an instance variable. Wrap connections in a proxy class that handles `autocommit=True` safely (without conflicting with psycopg2 context managers) and ensures liveness checks (pre-ping) with retries before yielding connections.
+
+## 2024-05-24 - Supabase Pre-Ping and Lazy Pool Initialization Thread Safety
+**Learning:** Checking `conn.closed` in psycopg2 is insufficient for testing cloud database connection liveness because it does not detect connections silently dropped by a firewall or load balancer. Also, lazy initialization of a connection pool in a multi-threaded app without a `threading.Lock()` causes severe connection leaks.
+**Action:** When creating psycopg2 connection pools, always use a thread lock around the initialization logic (`if pool is None: with lock: if pool is None: ...`). Implement a true pre-ping by executing a lightweight query (`SELECT 1`) inside a `try/except` block and drop the connection if it fails. Avoid triggering pool initialization during module load or class instantiation (`__init__`) if it causes blocking network I/O.
