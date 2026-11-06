@@ -1,0 +1,16 @@
+--- core/storage.py
++++ core/storage.py
+@@ -107,6 +107,7 @@
+             with self._pool.getconn() as conn:
+                 conn.autocommit = True
+                 with conn.cursor() as cur:
+                     cur.execute("""
+                         CREATE TABLE IF NOT EXISTS sessions (
+                             id TEXT PRIMARY KEY,
+@@ -140,6 +141,8 @@
+                         INSERT INTO sessions (id, title) VALUES ('telegram', 'Telegram Assistant') ON CONFLICT (id) DO NOTHING;
+                     """)
++                self._pool.putconn(conn)
+             print("[Storage] Supabase PostgreSQL Cloud Database connected and ready!")
+         except Exception as e:
+             print(f"[Storage Notice] Supabase table check: {e}")

@@ -1,0 +1,70 @@
+--- core/storage.py
++++ core/storage.py
+@@ -10,7 +10,7 @@
+
+ SUPABASE_DATABASE_URI = os.getenv(
+     "SUPABASE_DATABASE_URL",
+-    "postgresql://postgres.bpbwqvkvzjtfvxezxhja:Tanurithu.1209@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
++    ""
+ )
+
+ class PooledConnectionProxy:
+@@ -19,16 +19,17 @@
+         self.pool = pool
+         self.conn = None
+-        self.closed = False
++        self._proxy_closed = False
+
+         # Retry loop for acquiring connection
+-        for attempt in range(5):
++        max_attempts = 20
++        for attempt in range(max_attempts):
+             try:
+                 self.conn = self.pool.getconn()
+                 # Pre-ping to discard dead connections
+                 if self.conn.closed != 0:
+                     self.pool.putconn(self.conn, close=True)
+                     self.conn = None
+                     continue
+                 self.conn.autocommit = True
+                 break
+             except PoolError:
+@@ -37,17 +38,22 @@
+
+         if not self.conn:
+             raise Exception("Failed to acquire connection from pool after retries")
+
+     def __enter__(self):
+-        return self
++        return self.conn.__enter__()
+
+     def __exit__(self, exc_type, exc_val, exc_tb):
++        self.conn.__exit__(exc_type, exc_val, exc_tb)
+         self.close()
+
+     def __del__(self):
+         self.close()
+
+     def close(self):
+-        if not self.closed and self.conn:
++        if not self._proxy_closed and self.conn:
+             self.pool.putconn(self.conn)
+-            self.closed = True
++            self._proxy_closed = True
+             self.conn = None
+
+@@ -82,6 +88,9 @@
+         self.db_uri = db_uri
+         self._pool = None
+-        self._ensure_tables()
+
+     def _get_connection(self):
+         """Retrieves a reliable connection from the Supabase PostgreSQL connection pool."""
+@@ -95,6 +104,8 @@
+     def _ensure_tables(self):
+         """Verifies tables exist in Supabase."""
++        if not self.db_uri:
++            return
+         try:
+             with self._get_connection() as conn:
+                 with conn.cursor() as cur:
