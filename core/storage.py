@@ -5,12 +5,47 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool, PoolError
 import config
 
 SUPABASE_DATABASE_URI = os.getenv(
     "SUPABASE_DATABASE_URL",
-    "postgresql://postgres.bpbwqvkvzjtfvxezxhja:Tanurithu.1209@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
+    "postgresql://localhost:5432/postgres"
 )
+
+class PooledConnectionProxy:
+    """Wrapper to handle context management for pooled connections with autocommit."""
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+        self._closed = False
+        self._conn.autocommit = True
+
+    def close(self):
+        if not self._closed:
+            try:
+                self._pool.putconn(self._conn)
+            except Exception:
+                pass
+            self._closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        if name in ("_pool", "_conn", "_closed"):
+            super().__setattr__(name, value)
+        else:
+            setattr(self._conn, name, value)
 
 def serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """Converts datetime objects and non-serializable fields to clean JSON strings."""
@@ -30,13 +65,31 @@ class SupabaseStorageManager:
 
     def __init__(self, db_uri: str = SUPABASE_DATABASE_URI):
         self.db_uri = db_uri
+        self._pool = None
         self._ensure_tables()
 
+    def _init_pool(self):
+        """Lazily initialize the connection pool."""
+        if self._pool is None:
+            self._pool = ThreadedConnectionPool(1, 10, self.db_uri, connect_timeout=10)
+
     def _get_connection(self):
-        """Creates a reliable connection to Supabase PostgreSQL."""
-        conn = psycopg2.connect(self.db_uri, connect_timeout=10)
-        conn.autocommit = True
-        return conn
+        """Retrieves a reliable connection from the Supabase PostgreSQL pool."""
+        if self._pool is None:
+            self._init_pool()
+
+        for _ in range(10):
+            try:
+                conn = self._pool.getconn()
+                if conn.closed:
+                    self._pool.putconn(conn, close=True)
+                    continue
+                return PooledConnectionProxy(self._pool, conn)
+            except PoolError:
+                time.sleep(0.1)
+
+        conn = self._pool.getconn()
+        return PooledConnectionProxy(self._pool, conn)
 
     def _ensure_tables(self):
         """Verifies tables exist in Supabase."""
